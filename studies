@@ -1,0 +1,411 @@
+Option Compare Database
+Option Explicit
+
+Private Const DEFAULT_CC  As String = "mtl-watson@crl.com"
+Private isEditing         As Boolean
+Private isNew             As Boolean
+Private selectedStudyID   As Long
+
+' =============================================
+' FORM LOAD
+' =============================================
+Private Sub Form_Load()
+    isEditing = False
+    isNew = False
+    selectedStudyID = 0
+    SetFormState "locked"
+End Sub
+
+' =============================================
+' SUBFORM ROW CLICKED — navigate detail
+' =============================================
+Public Sub StudySelected(studyID As Long)
+    ' Block selection while editing
+    If isEditing Or isNew Then
+        MsgBox "Please save or cancel your current changes first.", _
+               vbExclamation, "Unsaved Changes"
+        Exit Sub
+    End If
+
+    selectedStudyID = studyID
+
+    ' Navigate the bound form to this record
+    Dim rs As DAO.Recordset
+    Set rs = Me.RecordsetClone
+    rs.FindFirst "StudyID = " & studyID
+    If Not rs.NoMatch Then
+        Me.Bookmark = rs.Bookmark
+    End If
+    rs.Close
+
+    SetFormState "selected"
+End Sub
+
+' =============================================
+' EDIT BUTTON
+' =============================================
+Private Sub cmdEdit_Click()
+    isEditing = True
+    SetFormState "editing"
+End Sub
+
+' =============================================
+' NEW STUDY
+' =============================================
+Private Sub cmdNew_Click()
+    If isEditing Or isNew Then
+        Dim ans As Integer
+        ans = MsgBox("You have unsaved changes. Save first?", _
+                     vbYesNoCancel + vbQuestion, "Unsaved Changes")
+        If ans = vbYes Then
+            If Not ValidateForm() Then Exit Sub
+            RunCommand acCmdSaveRecord
+        ElseIf ans = vbCancel Then
+            Exit Sub
+        Else
+            Me.Undo
+        End If
+    End If
+
+    DoCmd.GoToRecord , , acNewRec
+    Me.txtCC.Value = DEFAULT_CC
+    selectedStudyID = 0
+    isNew = True
+    isEditing = False
+    SetFormState "editing"
+End Sub
+
+' =============================================
+' SAVE
+' =============================================
+Private Sub cmdSave_Click()
+    If Not ValidateForm() Then Exit Sub
+
+    RunCommand acCmdSaveRecord
+
+    ' Refresh subform so new/edited study appears
+    Me.subStudiesList.Form.Requery
+
+    ' Refresh filter combos in case new protocols/numbers added
+    RefreshFilterSources
+
+    isEditing = False
+    isNew = False
+
+    If selectedStudyID = 0 Then
+        selectedStudyID = Me.StudyID
+    End If
+
+    SetFormState "selected"
+    MsgBox "Study saved successfully.", vbInformation, "Saved"
+End Sub
+
+' =============================================
+' CANCEL
+' =============================================
+Private Sub cmdCancel_Click()
+    If Me.Dirty Then
+        If MsgBox("Discard changes?", vbYesNo + vbQuestion, "Cancel Edit") = vbNo Then
+            Exit Sub
+        End If
+        Me.Undo
+    End If
+
+    isEditing = False
+
+    If isNew Then
+        isNew = False
+        selectedStudyID = 0
+        SetFormState "locked"
+    Else
+        SetFormState "selected"
+    End If
+End Sub
+
+' =============================================
+' DELETE
+' =============================================
+Private Sub cmdDelete_Click()
+    If Me.NewRecord Then Exit Sub
+
+    If DCount("*", "tblShipments", "StudyID=" & Me.StudyID) > 0 Then
+        MsgBox "This study has existing shipments and cannot be deleted.", _
+               vbExclamation, "Cannot Delete"
+        Exit Sub
+    End If
+
+    If MsgBox("Delete this study permanently?", _
+              vbYesNo + vbCritical, "Confirm Delete") = vbYes Then
+        DoCmd.RunCommand acCmdDeleteRecord
+        Me.subStudiesList.Form.Requery
+        selectedStudyID = 0
+        isEditing = False
+        isNew = False
+        SetFormState "locked"
+    End If
+End Sub
+
+' =============================================
+' CLOSE
+' =============================================
+Private Sub cmdClose_Click()
+    If isEditing Or isNew Then
+        Dim ans As Integer
+        ans = MsgBox("You have unsaved changes. Save before closing?", _
+                     vbYesNoCancel + vbQuestion, "Unsaved Changes")
+        If ans = vbYes Then
+            If Not ValidateForm() Then Exit Sub
+            RunCommand acCmdSaveRecord
+        ElseIf ans = vbCancel Then
+            Exit Sub
+        Else
+            Me.Undo
+        End If
+    End If
+    DoCmd.Close acForm, Me.Name
+End Sub
+
+' =============================================
+' FILTER COMBOBOXES — type to filter list
+' =============================================
+Private Sub cboFilterClient_Change()
+    FilterCombo Me.cboFilterClient, _
+        "SELECT DISTINCT ClientName FROM tblClients " & _
+        "WHERE ClientName LIKE '*[TYPED]*' ORDER BY ClientName"
+End Sub
+
+Private Sub cboFilterClient_AfterUpdate()
+    ApplyFilters
+End Sub
+
+Private Sub cboFilterSponsorProtocol_Change()
+    FilterCombo Me.cboFilterSponsorProtocol, _
+        "SELECT DISTINCT SponsorProtocol FROM tblStudies " & _
+        "WHERE SponsorProtocol LIKE '*[TYPED]*' " & _
+        "AND Len(Trim(Nz(SponsorProtocol,"""")))>0 ORDER BY SponsorProtocol"
+End Sub
+
+Private Sub cboFilterSponsorProtocol_AfterUpdate()
+    ApplyFilters
+End Sub
+
+Private Sub cboFilterClientProtocol_Change()
+    FilterCombo Me.cboFilterClientProtocol, _
+        "SELECT DISTINCT ClientProtocol FROM tblStudies " & _
+        "WHERE ClientProtocol LIKE '*[TYPED]*' " & _
+        "AND Len(Trim(Nz(ClientProtocol,"""")))>0 ORDER BY ClientProtocol"
+End Sub
+
+Private Sub cboFilterClientProtocol_AfterUpdate()
+    ApplyFilters
+End Sub
+
+Private Sub cboFilterStudyNumber_Change()
+    FilterCombo Me.cboFilterStudyNumber, _
+        "SELECT DISTINCT StudyNumber FROM tblStudies " & _
+        "WHERE StudyNumber LIKE '*[TYPED]*' " & _
+        "AND Len(Trim(Nz(StudyNumber,"""")))>0 ORDER BY StudyNumber"
+End Sub
+
+Private Sub cboFilterStudyNumber_AfterUpdate()
+    ApplyFilters
+End Sub
+
+Private Sub FilterCombo(cbo As ComboBox, sqlTemplate As String)
+    Dim typed As String
+    typed = cbo.Text
+    If Len(typed) = 0 Then
+        cbo.RowSource = Replace(sqlTemplate, " LIKE '*[TYPED]*'", "")
+    Else
+        cbo.RowSource = Replace(sqlTemplate, "[TYPED]", typed)
+        cbo.Dropdown
+    End If
+End Sub
+
+' =============================================
+' APPLY ALL FILTERS TO SUBFORM
+' =============================================
+Private Sub ApplyFilters()
+    Dim sql As String
+    Dim where As String
+
+    sql = "SELECT s.StudyID, c.ClientName, s.SponsorProtocol, " & _
+          "s.ClientProtocol, s.StudyNumber, s.Matrix " & _
+          "FROM tblStudies s LEFT JOIN tblClients c ON s.ClientID = c.ClientID"
+
+    ' Build WHERE clause from active filters
+    If Not IsNull(Me.cboFilterClient) And Trim(Me.cboFilterClient & "") <> "" Then
+        where = AddFilter(where, "c.ClientName = '" & _
+                Replace(Me.cboFilterClient.Value, "'", "''") & "'")
+    End If
+    If Not IsNull(Me.cboFilterSponsorProtocol) And Trim(Me.cboFilterSponsorProtocol & "") <> "" Then
+        where = AddFilter(where, "s.SponsorProtocol = '" & _
+                Replace(Me.cboFilterSponsorProtocol.Value, "'", "''") & "'")
+    End If
+    If Not IsNull(Me.cboFilterClientProtocol) And Trim(Me.cboFilterClientProtocol & "") <> "" Then
+        where = AddFilter(where, "s.ClientProtocol = '" & _
+                Replace(Me.cboFilterClientProtocol.Value, "'", "''") & "'")
+    End If
+    If Not IsNull(Me.cboFilterStudyNumber) And Trim(Me.cboFilterStudyNumber & "") <> "" Then
+        where = AddFilter(where, "s.StudyNumber = '" & _
+                Replace(Me.cboFilterStudyNumber.Value, "'", "''") & "'")
+    End If
+
+    If where <> "" Then sql = sql & " WHERE " & where
+    sql = sql & " ORDER BY c.ClientName, s.SponsorProtocol"
+
+    Me.subStudiesList.Form.RecordSource = sql
+End Sub
+
+Private Function AddFilter(current As String, newCondition As String) As String
+    If current = "" Then
+        AddFilter = newCondition
+    Else
+        AddFilter = current & " AND " & newCondition
+    End If
+End Function
+
+' =============================================
+' CLEAR FILTERS
+' =============================================
+Private Sub cmdClearFilters_Click()
+    Me.cboFilterClient.Value = Null
+    Me.cboFilterSponsorProtocol.Value = Null
+    Me.cboFilterClientProtocol.Value = Null
+    Me.cboFilterStudyNumber.Value = Null
+
+    ' Reset filter combo row sources
+    RefreshFilterSources
+
+    ' Reset subform to show all studies
+    Me.subStudiesList.Form.RecordSource = _
+        "SELECT s.StudyID, c.ClientName, s.SponsorProtocol, " & _
+        "s.ClientProtocol, s.StudyNumber, s.Matrix " & _
+        "FROM tblStudies s LEFT JOIN tblClients c ON s.ClientID = c.ClientID " & _
+        "ORDER BY c.ClientName, s.SponsorProtocol"
+End Sub
+
+Private Sub RefreshFilterSources()
+    Me.cboFilterClient.RowSource = _
+        "SELECT DISTINCT ClientName FROM tblClients ORDER BY ClientName"
+    Me.cboFilterSponsorProtocol.RowSource = _
+        "SELECT DISTINCT SponsorProtocol FROM tblStudies " & _
+        "WHERE Len(Trim(Nz(SponsorProtocol,"""")))>0 ORDER BY SponsorProtocol"
+    Me.cboFilterClientProtocol.RowSource = _
+        "SELECT DISTINCT ClientProtocol FROM tblStudies " & _
+        "WHERE Len(Trim(Nz(ClientProtocol,"""")))>0 ORDER BY ClientProtocol"
+    Me.cboFilterStudyNumber.RowSource = _
+        "SELECT DISTINCT StudyNumber FROM tblStudies " & _
+        "WHERE Len(Trim(Nz(StudyNumber,"""")))>0 ORDER BY StudyNumber"
+End Sub
+
+' =============================================
+' CLIENT FILTER AS YOU TYPE (left side)
+' =============================================
+Private Sub cboClientID_Change()
+    Dim typed As String
+    typed = Me.cboClientID.Text
+    If Len(typed) = 0 Then
+        Me.cboClientID.RowSource = _
+            "SELECT ClientID, ClientName FROM tblClients ORDER BY ClientName"
+    Else
+        Me.cboClientID.RowSource = _
+            "SELECT ClientID, ClientName FROM tblClients " & _
+            "WHERE ClientName LIKE '*" & typed & "*' ORDER BY ClientName"
+        Me.cboClientID.Dropdown
+    End If
+End Sub
+
+' =============================================
+' FORM STATE MANAGER
+' =============================================
+Private Sub SetFormState(state As String)
+    Select Case state
+
+        Case "locked"
+            Me.lblStatus.Caption  = "Select a study from the list to view or edit"
+            Me.lblStatus.ForeColor = vbRed
+            LockAllFields True
+            Me.cmdEdit.Enabled    = False
+            Me.cmdSave.Enabled    = False
+            Me.cmdCancel.Enabled  = False
+            Me.cmdDelete.Enabled  = False
+            Me.cmdNew.Enabled     = True
+            Me.cmdClose.Enabled   = True
+
+        Case "selected"
+            Me.lblStatus.Caption  = "Study: " & Nz(Me.txtStudyNumber.Value, "")
+            Me.lblStatus.ForeColor = vbBlack
+            LockAllFields True
+            Me.cmdEdit.Enabled    = True
+            Me.cmdSave.Enabled    = False
+            Me.cmdCancel.Enabled  = False
+            Me.cmdDelete.Enabled  = True
+            Me.cmdNew.Enabled     = True
+            Me.cmdClose.Enabled   = True
+
+        Case "editing"
+            If isNew Then
+                Me.lblStatus.Caption = "New Study"
+            Else
+                Me.lblStatus.Caption = "Editing: " & Nz(Me.txtStudyNumber.Value, "")
+            End If
+            Me.lblStatus.ForeColor = vbBlue
+            LockAllFields False
+            Me.cmdEdit.Enabled    = False
+            Me.cmdSave.Enabled    = True
+            Me.cmdCancel.Enabled  = True
+            Me.cmdDelete.Enabled  = False
+            Me.cmdNew.Enabled     = False
+            Me.cmdClose.Enabled   = True
+
+    End Select
+End Sub
+
+Private Sub LockAllFields(bLock As Boolean)
+    Dim ctl As Control
+    For Each ctl In Me.Controls
+        If ctl.ControlType = acTextBox Or ctl.ControlType = acComboBox Then
+            ' Skip filter combos on the right side
+            If Left(ctl.Name, 9) <> "cboFilter" Then
+                ctl.Locked = bLock
+                If bLock Then
+                    ctl.BackColor = 15921906 ' light gray
+                Else
+                    ctl.BackColor = 16777215 ' white
+                End If
+            End If
+        End If
+    Next ctl
+End Sub
+
+' =============================================
+' VALIDATION
+' =============================================
+Private Function ValidateForm() As Boolean
+    ValidateForm = False
+    If IsNullOrEmpty(Me.txtSponsorProtocol)    Then Alert "Sponsor Protocol":    Exit Function
+    If IsNullOrEmpty(Me.txtClientProtocol)     Then Alert "Client Protocol":     Exit Function
+    If IsNullOrEmpty(Me.txtStudyNumber)        Then Alert "Study Number":        Exit Function
+    If IsNullOrEmpty(Me.txtMatrix)             Then Alert "Matrix":              Exit Function
+    If IsNull(Me.cboStorageTemp)               Then Alert "Storage Temp":        Exit Function
+    If IsNull(Me.cboStudyTypeID)               Then Alert "Study Type":          Exit Function
+    If IsNull(Me.cboTech1ID)                   Then Alert "Tech 1":              Exit Function
+    If IsNull(Me.cboTech2ID)                   Then Alert "Tech 2":              Exit Function
+    If IsNull(Me.cboClientID)                  Then Alert "Client":              Exit Function
+    If IsNullOrEmpty(Me.txtStudyDirector)      Then Alert "Study Director":      Exit Function
+    If IsNullOrEmpty(Me.txtStudyDirectorEmail) Then Alert "Study Director Email":Exit Function
+    If IsNullOrEmpty(Me.txtScientist)          Then Alert "Scientist":           Exit Function
+    If IsNullOrEmpty(Me.txtScientistEmail)     Then Alert "Scientist Email":     Exit Function
+    If IsNullOrEmpty(Me.txtMonitor)            Then Alert "Monitor":             Exit Function
+    If IsNullOrEmpty(Me.txtMonitorEmail)       Then Alert "Monitor Email":       Exit Function
+    ValidateForm = True
+End Function
+
+Private Function IsNullOrEmpty(ctl As Control) As Boolean
+    IsNullOrEmpty = (IsNull(ctl.Value) Or Trim(ctl.Value & "") = "")
+End Function
+
+Private Sub Alert(fieldName As String)
+    MsgBox fieldName & " is required.", vbExclamation, "Missing Field"
+End Sub
