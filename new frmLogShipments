@@ -1,0 +1,561 @@
+Option Compare Database
+Option Explicit
+
+' =============================================
+' MODULE LEVEL
+' =============================================
+Private Type ShipmentRow
+    SR          As String
+    StudyID     As Long
+    StudyNumber As String
+    Protocol    As String
+    Matrix      As String
+    Samples     As Long
+    Boxes       As Long
+    SplitType   As String
+    Waybill     As String
+    Condition   As String
+    Tech1       As String
+    Tech2       As String
+    TempFreezer As String
+End Type
+
+Private pendingShipments()  As ShipmentRow
+Private pendingCount        As Long
+Private editShipmentID      As Long
+Private editMode            As Boolean
+Private originalSR          As String
+
+' =============================================
+' FORM LOAD
+' =============================================
+Private Sub Form_Load()
+    pendingCount   = 0
+    editMode       = False
+    editShipmentID = 0
+    originalSR     = ""
+    ReDim pendingShipments(0)
+    Me.txtDate.Value        = Date
+    Me.lstPreview.RowSource = ""
+    Me.lstMatrix.RowSource  = ""
+    SetNewMode
+End Sub
+
+' =============================================
+' PUBLIC — called by frmShipments to load
+'          a shipment for editing
+' =============================================
+Public Sub LoadForEdit(shipmentID As Long)
+    editShipmentID = shipmentID
+    editMode       = True
+
+    Dim db As DAO.Database
+    Dim rs As DAO.Recordset
+    Set db = CurrentDb()
+    Set rs = db.OpenRecordset( _
+        "SELECT sh.*, " & _
+        "st.StudyNumber, st.SponsorProtocol, st.ClientProtocol, st.Matrix, st.Comments, " & _
+        "t1.TechName AS Tech1, t2.TechName AS Tech2, " & _
+        "f.FreezerName AS TempFreezer " & _
+        "FROM ((((tblShipments sh " & _
+        "INNER JOIN tblStudies st ON sh.StudyID = st.StudyID) " & _
+        "LEFT JOIN tblTechs t1 ON st.Tech1ID = t1.TechID) " & _
+        "LEFT JOIN tblTechs t2 ON st.Tech2ID = t2.TechID) " & _
+        "LEFT JOIN tblFreezer f ON st.TempFreezerID = f.FreezerID) " & _
+        "WHERE sh.ShipmentID = " & shipmentID)
+
+    If rs.EOF Then
+        MsgBox "Shipment not found.", vbExclamation
+        rs.Close
+        DoCmd.Close acForm, Me.Name
+        Exit Sub
+    End If
+
+    ' Store original SR for comparison on save
+    originalSR = Nz(rs!SR, "")
+
+    ' Fill protocol and trigger matrix load
+    Me.cboProtocol.Value = Nz(rs!SponsorProtocol, "")
+    cboProtocol_AfterUpdate
+
+    ' Select the correct matrix in the listbox
+    Dim i As Long
+    For i = 0 To Me.lstMatrix.ListCount - 1
+        If Me.lstMatrix.Column(1, i) = Nz(rs!Matrix, "") Then
+            Me.lstMatrix.Selected(i) = True
+            lstMatrix_Click
+            Exit For
+        End If
+    Next i
+
+    ' Fill shipment fields
+    Me.txtSR.Value      = Nz(rs!SR, "")
+    Me.txtDate.Value    = Format(rs!DeliveryDate, "dd/mm/yyyy")
+    Me.txtWaybill.Value = Nz(rs!Waybill, "")
+    Me.txtSamples.Value = Nz(rs!Samples, "")
+    Me.txtBoxes.Value   = Nz(rs!Boxes, "")
+    SetCondition Nz(rs!Condition, "")
+    SetSplit Nz(rs!SplitType, "")
+    rs.Close
+
+    SetEditMode
+End Sub
+
+' =============================================
+' PROTOCOL CASCADE -> MATRIX
+' =============================================
+Private Sub cboProtocol_Change()
+    Dim typed As String
+    typed = Me.cboProtocol.Text
+    If Len(typed) = 0 Then
+        Me.cboProtocol.RowSource = "qryAllProtocols"
+        Me.lstMatrix.RowSource   = ""
+        ClearStudyFields
+        Exit Sub
+    End If
+    Me.cboProtocol.RowSource = _
+        "SELECT DISTINCT SponsorProtocol AS Protocol FROM tblStudies " & _
+        "WHERE SponsorProtocol LIKE '*" & typed & "*' " & _
+        "UNION " & _
+        "SELECT DISTINCT ClientProtocol FROM tblStudies " & _
+        "WHERE ClientProtocol LIKE '*" & typed & "*' " & _
+        "ORDER BY Protocol"
+    Me.cboProtocol.Dropdown
+End Sub
+
+Private Sub cboProtocol_AfterUpdate()
+    Me.lstMatrix.RowSource = ""
+    ClearStudyFields
+    If IsNull(Me.cboProtocol) Or Trim(Me.cboProtocol & "") = "" Then Exit Sub
+    Dim proto As String
+    proto = Replace(Me.cboProtocol.Value, "'", "''")
+    Me.lstMatrix.RowSource = _
+        "SELECT s.StudyID, s.Matrix " & _
+        "FROM tblStudies s " & _
+        "WHERE s.SponsorProtocol = '" & proto & "' " & _
+        "OR s.ClientProtocol = '" & proto & "' " & _
+        "ORDER BY s.Matrix"
+End Sub
+
+' =============================================
+' MATRIX CLICK -> AUTO-FILL
+' =============================================
+Private Sub lstMatrix_Click()
+    If Me.lstMatrix.ListIndex = -1 Then Exit Sub
+    Dim studyID As Long
+    studyID = Me.lstMatrix.Column(0)
+    Dim db As DAO.Database
+    Dim rs As DAO.Recordset
+    Set db = CurrentDb()
+    Set rs = db.OpenRecordset( _
+        "SELECT s.StudyID, s.StudyNumber, s.Matrix, s.Comments, " & _
+        "t1.TechName AS Tech1, t2.TechName AS Tech2, " & _
+        "f.FreezerName AS TempFreezer " & _
+        "FROM ((tblStudies s " & _
+        "LEFT JOIN tblTechs t1 ON s.Tech1ID = t1.TechID) " & _
+        "LEFT JOIN tblTechs t2 ON s.Tech2ID = t2.TechID) " & _
+        "LEFT JOIN tblFreezer f ON s.TempFreezerID = f.FreezerID " & _
+        "WHERE s.StudyID = " & studyID)
+    If rs.EOF Then rs.Close: Exit Sub
+    Me.txtStudyNumber.Value = Nz(rs!StudyNumber, "")
+    Me.txtTech1.Value       = Nz(rs!Tech1, "")
+    Me.txtTech2.Value       = Nz(rs!Tech2, "")
+    Me.txtTempFreezer.Value = Nz(rs!TempFreezer, "")
+    Me.txtComments.Value    = Nz(rs!Comments, "")
+    rs.Close
+End Sub
+
+' =============================================
+' ADD TO LIST (new mode only)
+' =============================================
+Private Sub cmdAdd_Click()
+    If Not ValidateInputs() Then Exit Sub
+
+    ' Duplicate SR check in preview
+    Dim i As Long
+    For i = 0 To pendingCount - 1
+        If pendingShipments(i).SR = Trim(Me.txtSR.Value) Then
+            MsgBox "SR " & Me.txtSR.Value & " is already in the list.", vbExclamation
+            Exit Sub
+        End If
+    Next i
+
+    ' Duplicate SR check in table
+    If DCount("*", "tblShipments", "SR='" & _
+       Replace(Trim(Me.txtSR.Value), "'", "''") & "'") > 0 Then
+        MsgBox "SR " & Me.txtSR.Value & " already exists in Shipments.", vbExclamation
+        Exit Sub
+    End If
+
+    ' Add to pending array
+    ReDim Preserve pendingShipments(pendingCount)
+    With pendingShipments(pendingCount)
+        .SR          = Trim(Me.txtSR.Value)
+        .StudyID     = CLng(Me.lstMatrix.Column(0))
+        .StudyNumber = Nz(Me.txtStudyNumber.Value, "")
+        .Protocol    = Me.cboProtocol.Value
+        .Matrix      = Me.lstMatrix.Column(1)
+        .Samples     = CLng(Me.txtSamples.Value)
+        .Boxes       = CLng(Me.txtBoxes.Value)
+        .SplitType   = GetSplitValue()
+        .Waybill     = Nz(Me.txtWaybill.Value, "")
+        .Condition   = GetConditionValue()
+        .Tech1       = Nz(Me.txtTech1.Value, "")
+        .Tech2       = Nz(Me.txtTech2.Value, "")
+        .TempFreezer = Nz(Me.txtTempFreezer.Value, "")
+    End With
+    pendingCount = pendingCount + 1
+
+    RefreshPreview
+    ClearInputFields
+End Sub
+
+' =============================================
+' PREVIEW DOUBLE-CLICK — remove and re-edit
+' =============================================
+Private Sub lstPreview_DblClick(Cancel As Integer)
+    If Me.lstPreview.ListIndex = -1 Then Exit Sub
+    Dim idx As Long
+    idx = Me.lstPreview.ListIndex
+
+    With pendingShipments(idx)
+        Me.txtSR.Value          = .SR
+        Me.txtSamples.Value     = .Samples
+        Me.txtBoxes.Value       = .Boxes
+        Me.txtWaybill.Value     = .Waybill
+        Me.txtTech1.Value       = .Tech1
+        Me.txtTech2.Value       = .Tech2
+        Me.txtTempFreezer.Value = .TempFreezer
+        Me.txtStudyNumber.Value = .StudyNumber
+        Me.cboProtocol.Value    = .Protocol
+        cboProtocol_AfterUpdate
+        SetCondition .Condition
+        SetSplit .SplitType
+    End With
+
+    ' Remove from array
+    Dim j As Long
+    For j = idx To pendingCount - 2
+        pendingShipments(j) = pendingShipments(j + 1)
+    Next j
+    pendingCount = pendingCount - 1
+    ReDim Preserve pendingShipments(IIf(pendingCount = 0, 0, pendingCount - 1))
+    RefreshPreview
+End Sub
+
+' =============================================
+' SAVE ALL (new mode)
+' =============================================
+Private Sub cmdSaveAll_Click()
+    If editMode Then
+        SaveEdit
+    Else
+        SaveNew
+    End If
+End Sub
+
+Private Sub SaveNew()
+    If pendingCount = 0 Then
+        MsgBox "No shipments in the list.", vbInformation
+        Exit Sub
+    End If
+
+    Dim db As DAO.Database
+    Dim rs As DAO.Recordset
+    Set db = CurrentDb()
+    Set rs = db.OpenRecordset("tblShipments", dbOpenDynaset)
+
+    Dim i As Long
+    For i = 0 To pendingCount - 1
+        rs.AddNew
+            rs!DeliveryDate = CDate(Me.txtDate.Value)
+            rs!SR           = pendingShipments(i).SR
+            rs!StudyID      = pendingShipments(i).StudyID
+            rs!Samples      = pendingShipments(i).Samples
+            rs!Boxes        = pendingShipments(i).Boxes
+            rs!SplitType    = pendingShipments(i).SplitType
+            rs!Waybill      = pendingShipments(i).Waybill
+            rs!Condition    = pendingShipments(i).Condition
+        rs.Update
+    Next i
+    rs.Close
+
+    SendArrivalEmail
+    MsgBox "All shipments saved!", vbInformation
+    ResetForm
+End Sub
+
+' =============================================
+' SAVE EDIT (edit mode)
+' =============================================
+Private Sub SaveEdit()
+    If Not ValidateInputs() Then Exit Sub
+
+    Dim newSR As String
+    newSR = Trim(Me.txtSR.Value)
+
+    ' SR changed — warn and check uniqueness
+    If newSR <> originalSR Then
+        If MsgBox("You are changing the SR number. This is a unique identifier." & vbCrLf & _
+                  "Are you sure?", vbYesNo + vbExclamation, "SR Change Warning") = vbNo Then
+            Exit Sub
+        End If
+        If DCount("*", "tblShipments", "SR='" & _
+           Replace(newSR, "'", "''") & "'") > 0 Then
+            MsgBox "SR " & newSR & " already exists in Shipments.", vbExclamation
+            Exit Sub
+        End If
+    End If
+
+    ' Update the record
+    Dim db As DAO.Database
+    Dim rs As DAO.Recordset
+    Set db = CurrentDb()
+    Set rs = db.OpenRecordset( _
+        "SELECT * FROM tblShipments WHERE ShipmentID = " & editShipmentID, _
+        dbOpenDynaset)
+
+    If rs.EOF Then
+        MsgBox "Shipment record not found.", vbExclamation
+        rs.Close
+        Exit Sub
+    End If
+
+    rs.Edit
+        rs!SR           = newSR
+        rs!StudyID      = CLng(Me.lstMatrix.Column(0))
+        rs!DeliveryDate = CDate(Me.txtDate.Value)
+        rs!Samples      = CLng(Me.txtSamples.Value)
+        rs!Boxes        = CLng(Me.txtBoxes.Value)
+        rs!SplitType    = GetSplitValue()
+        rs!Waybill      = Nz(Me.txtWaybill.Value, "")
+        rs!Condition    = GetConditionValue()
+    rs.Update
+    rs.Close
+
+    MsgBox "Shipment updated successfully.", vbInformation, "Saved"
+    DoCmd.Close acForm, Me.Name
+End Sub
+
+' =============================================
+' EMAIL
+' =============================================
+Private Sub SendArrivalEmail()
+    Dim recipients As String
+    recipients = GetArrivalRecipients()
+    If recipients = "" Then
+        MsgBox "No email recipients found in Settings.", vbExclamation
+        Exit Sub
+    End If
+
+    Dim body As String
+    body = "Hi all," & vbCrLf & vbCrLf & _
+           "The following shipments have been received:" & vbCrLf & vbCrLf
+
+    Dim i As Long
+    For i = 0 To pendingCount - 1
+        body = body & "SR #:         " & pendingShipments(i).SR          & vbCrLf & _
+                      "Study:        " & pendingShipments(i).StudyNumber  & vbCrLf & _
+                      "Matrix:       " & pendingShipments(i).Matrix       & vbCrLf & _
+                      "Samples:      " & pendingShipments(i).Samples      & vbCrLf & _
+                      "Boxes:        " & pendingShipments(i).Boxes        & vbCrLf & _
+                      "Condition:    " & pendingShipments(i).Condition    & vbCrLf & _
+                      "Tech(s):      " & TechDisplay(pendingShipments(i).Tech1, _
+                                                     pendingShipments(i).Tech2) & vbCrLf & _
+                      "Waybill:      " & pendingShipments(i).Waybill     & vbCrLf & _
+                      "Temp Freezer: " & pendingShipments(i).TempFreezer & vbCrLf
+        If i < pendingCount - 1 Then body = body & "---" & vbCrLf
+    Next i
+
+    body = body & vbCrLf & "Date received: " & Format(Me.txtDate.Value, "dd/mm/yyyy")
+
+    Dim olApp  As Object
+    Dim olMail As Object
+    Set olApp  = CreateObject("Outlook.Application")
+    Set olMail = olApp.CreateItem(0)
+    With olMail
+        .To      = recipients
+        .Subject = "Shipment Received - " & Format(Me.txtDate.Value, "dd/mm/yyyy")
+        .Body    = body
+        .Display
+    End With
+End Sub
+
+Private Function GetArrivalRecipients() As String
+    Dim db As DAO.Database
+    Dim rs As DAO.Recordset
+    Dim s  As String
+    Set db = CurrentDb()
+    Set rs = db.OpenRecordset( _
+        "SELECT Email FROM tblEmailRecipients " & _
+        "WHERE Len(Trim(Nz(Email,'')))>0")
+    Do While Not rs.EOF
+        If s <> "" Then s = s & ";"
+        s = s & rs!Email
+        rs.MoveNext
+    Loop
+    rs.Close
+    GetArrivalRecipients = s
+End Function
+
+' =============================================
+' MODE SWITCHERS
+' =============================================
+Private Sub SetNewMode()
+    Me.Caption              = "Log New Shipment"
+    Me.cmdSaveAll.Caption   = "Save All & Send Email"
+    Me.cmdAdd.Visible       = True
+    Me.lstPreview.Visible   = True
+    Me.cmdCancel.Visible    = False
+End Sub
+
+Private Sub SetEditMode()
+    Me.Caption              = "Edit Shipment"
+    Me.cmdSaveAll.Caption   = "Update Shipment"
+    Me.cmdAdd.Visible       = False
+    Me.lstPreview.Visible   = False
+    Me.cmdCancel.Visible    = True
+End Sub
+
+' =============================================
+' CANCEL (edit mode only)
+' =============================================
+Private Sub cmdCancel_Click()
+    If MsgBox("Discard changes and close?", _
+              vbYesNo + vbQuestion, "Cancel") = vbYes Then
+        DoCmd.Close acForm, Me.Name
+    End If
+End Sub
+
+' =============================================
+' VALIDATION
+' =============================================
+Private Function ValidateInputs() As Boolean
+    ValidateInputs = False
+    If IsNull(Me.cboProtocol) Or Trim(Me.cboProtocol & "") = "" Then
+        MsgBox "Please select a Protocol.", vbExclamation: Exit Function
+    End If
+    If Me.lstMatrix.ListIndex = -1 Then
+        MsgBox "Please select a Matrix.", vbExclamation: Exit Function
+    End If
+    If IsNull(Me.txtSR) Or Trim(Me.txtSR & "") = "" Then
+        MsgBox "Please enter an SR number.", vbExclamation: Exit Function
+    End If
+    If Not IsDate(Me.txtDate) Then
+        MsgBox "Please enter a valid date.", vbExclamation: Exit Function
+    End If
+    If IsNull(Me.txtSamples) Or Not IsNumeric(Me.txtSamples) Then
+        MsgBox "Please enter a valid number of samples.", vbExclamation: Exit Function
+    End If
+    If IsNull(Me.txtBoxes) Or Not IsNumeric(Me.txtBoxes) Then
+        MsgBox "Please enter a valid number of boxes.", vbExclamation: Exit Function
+    End If
+    If Not Me.optFrozen And Not Me.optThawed Then
+        MsgBox "Please select a condition.", vbExclamation: Exit Function
+    End If
+    ValidateInputs = True
+End Function
+
+' =============================================
+' HELPERS
+' =============================================
+Private Function GetConditionValue() As String
+    If Me.optFrozen Then GetConditionValue = "Frozen" Else GetConditionValue = "Thawed"
+End Function
+
+Private Function GetSplitValue() As String
+    Dim r As String
+    If Me.chkPrimary Then r = "Primary"
+    If Me.chkDuplicate Then
+        If r <> "" Then r = r & ", "
+        r = r & "Duplicate"
+    End If
+    If Me.chkOther Then
+        If r <> "" Then r = r & ", "
+        r = r & "Other"
+    End If
+    GetSplitValue = r
+End Function
+
+Private Function TechDisplay(t1 As String, t2 As String) As String
+    If t1 <> "" And t2 <> "" Then
+        TechDisplay = t1 & " / " & t2
+    Else
+        TechDisplay = t1 & t2
+    End If
+End Function
+
+Private Sub SetCondition(val As String)
+    Me.optFrozen.Value = (val = "Frozen")
+    Me.optThawed.Value = (val = "Thawed")
+End Sub
+
+Private Sub SetSplit(val As String)
+    Me.chkPrimary.Value   = (InStr(1, val, "Primary",   vbTextCompare) > 0)
+    Me.chkDuplicate.Value = (InStr(1, val, "Duplicate", vbTextCompare) > 0)
+    Me.chkOther.Value     = (InStr(1, val, "Other",     vbTextCompare) > 0)
+End Sub
+
+Private Sub RefreshPreview()
+    Dim i   As Long
+    Dim src As String
+    For i = 0 To pendingCount - 1
+        If src <> "" Then src = src & ";"
+        src = src & pendingShipments(i).SR          & ";" & _
+                    pendingShipments(i).StudyNumber  & ";" & _
+                    pendingShipments(i).Matrix       & ";" & _
+                    TechDisplay(pendingShipments(i).Tech1, pendingShipments(i).Tech2)
+    Next i
+    Me.lstPreview.RowSource = src
+End Sub
+
+Private Sub ClearStudyFields()
+    Me.txtStudyNumber.Value = ""
+    Me.txtTech1.Value       = ""
+    Me.txtTech2.Value       = ""
+    Me.txtTempFreezer.Value = ""
+    Me.txtComments.Value    = ""
+    Me.lstMatrix.RowSource  = ""
+End Sub
+
+Private Sub ClearInputFields()
+    Me.cboProtocol.Value    = Null
+    Me.lstMatrix.RowSource  = ""
+    Me.txtSR.Value          = ""
+    Me.txtWaybill.Value     = ""
+    Me.txtSamples.Value     = ""
+    Me.txtBoxes.Value       = ""
+    Me.optFrozen.Value      = False
+    Me.optThawed.Value      = False
+    Me.chkPrimary.Value     = False
+    Me.chkDuplicate.Value   = False
+    Me.chkOther.Value       = False
+    ClearStudyFields
+    Me.cboProtocol.SetFocus
+End Sub
+
+Private Sub ResetForm()
+    pendingCount = 0
+    ReDim pendingShipments(0)
+    Me.lstPreview.RowSource = ""
+    ClearInputFields
+End Sub
+
+Private Sub cmdClear_Click()
+    ClearInputFields
+End Sub
+
+Private Sub cmdClose_Click()
+    If editMode Then
+        If MsgBox("Discard changes and close?", _
+                  vbYesNo + vbQuestion, "Cancel") = vbYes Then
+            DoCmd.Close acForm, Me.Name
+        End If
+    Else
+        If pendingCount > 0 Then
+            If MsgBox("You have unsaved shipments. Close anyway?", _
+                      vbYesNo + vbExclamation, "Unsaved Data") = vbNo Then Exit Sub
+        End If
+        DoCmd.Close acForm, Me.Name
+    End If
+End Sub
