@@ -1,0 +1,24 @@
+SELECT 
+    sh.ShipmentID,
+    sh.DeliveryDate,
+    sh.SR,
+    st.StudyNumber,
+    st.SponsorProtocol,
+    st.ClientProtocol,
+    st.Matrix,
+    sh.Samples,
+    sh.Boxes,
+    sh.Condition,
+    sh.SplitType,
+    sh.Waybill,
+    t1.TechName AS Tech1,
+    t2.TechName AS Tech2,
+    f1.FreezerName AS TempFreezer,
+    c.ClientName
+FROM ((((( tblShipments sh
+    INNER JOIN tblStudies st ON sh.StudyID = st.StudyID)
+    LEFT JOIN tblTechs t1 ON st.Tech1ID = t1.TechID)
+    LEFT JOIN tblTechs t2 ON st.Tech2ID = t2.TechID)
+    LEFT JOIN tblFreezer f1 ON st.TempFreezerID = f1.FreezerID)
+    LEFT JOIN tblClients c ON st.ClientID = c.ClientID)
+ORDER BY sh.DeliveryDate DESC, sh.ShipmentID DESC;
