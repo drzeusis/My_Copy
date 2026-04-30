@@ -1,0 +1,471 @@
+Option Compare Database
+Option Explicit
+
+' =============================================
+' FORM LOAD — preset date range to last 7 days
+' =============================================
+Private Sub Form_Load()
+    Me.txtDateFrom.Value = Date - 7
+    Me.txtDateTo.Value   = Date
+    ApplyFilters
+End Sub
+
+' =============================================
+' FILTER — SR search on Enter key
+' =============================================
+Private Sub txtFilterSR_KeyDown(KeyCode As Integer, Shift As Integer)
+    If KeyCode = 13 Then
+        cmdSearchSR_Click
+        KeyCode = 0
+    End If
+End Sub
+
+Private Sub cmdSearchSR_Click()
+    ApplyFilters
+End Sub
+
+' =============================================
+' FILTER COMBOBOXES — type to filter list
+' =============================================
+Private Sub cboFilterProtocol_Change()
+    FilterCombo Me.cboFilterProtocol, _
+        "SELECT DISTINCT SponsorProtocol AS Protocol FROM tblStudies " & _
+        "WHERE SponsorProtocol LIKE '*[T]*' " & _
+        "AND Len(Trim(Nz(SponsorProtocol,"""")))>0 " & _
+        "UNION SELECT DISTINCT ClientProtocol FROM tblStudies " & _
+        "WHERE ClientProtocol LIKE '*[T]*' " & _
+        "AND Len(Trim(Nz(ClientProtocol,"""")))>0 " & _
+        "ORDER BY Protocol"
+End Sub
+
+Private Sub cboFilterProtocol_AfterUpdate()
+    ApplyFilters
+End Sub
+
+Private Sub cboFilterStudyNumber_Change()
+    FilterCombo Me.cboFilterStudyNumber, _
+        "SELECT DISTINCT StudyNumber FROM tblStudies " & _
+        "WHERE StudyNumber LIKE '*[T]*' " & _
+        "AND Len(Trim(Nz(StudyNumber,"""")))>0 " & _
+        "ORDER BY StudyNumber"
+End Sub
+
+Private Sub cboFilterStudyNumber_AfterUpdate()
+    ApplyFilters
+End Sub
+
+Private Sub cboFilterClient_Change()
+    FilterCombo Me.cboFilterClient, _
+        "SELECT DISTINCT ClientName FROM tblClients " & _
+        "WHERE ClientName LIKE '*[T]*' " & _
+        "ORDER BY ClientName"
+End Sub
+
+Private Sub cboFilterClient_AfterUpdate()
+    ApplyFilters
+End Sub
+
+Private Sub cboFilterWaybill_Change()
+    FilterCombo Me.cboFilterWaybill, _
+        "SELECT DISTINCT Waybill FROM tblShipments " & _
+        "WHERE Waybill LIKE '*[T]*' " & _
+        "AND Len(Trim(Nz(Waybill,"""")))>0 " & _
+        "ORDER BY Waybill"
+End Sub
+
+Private Sub cboFilterWaybill_AfterUpdate()
+    ApplyFilters
+End Sub
+
+Private Sub txtDateFrom_AfterUpdate()
+    ApplyFilters
+End Sub
+
+Private Sub txtDateTo_AfterUpdate()
+    ApplyFilters
+End Sub
+
+Private Sub FilterCombo(cbo As ComboBox, sqlTemplate As String)
+    Dim typed As String
+    typed = cbo.Text
+    If Len(typed) = 0 Then
+        cbo.RowSource = Replace(sqlTemplate, " LIKE '*[T]*'", "")
+    Else
+        cbo.RowSource = Replace(sqlTemplate, "[T]", typed)
+        cbo.Dropdown
+    End If
+End Sub
+
+' =============================================
+' APPLY ALL FILTERS TO SUBFORM
+' =============================================
+Private Sub ApplyFilters()
+    Dim sql   As String
+    Dim where As String
+
+    sql = "SELECT sh.ShipmentID, sh.DeliveryDate, sh.SR, " & _
+          "st.StudyNumber, st.SponsorProtocol, st.ClientProtocol, st.Matrix, " & _
+          "sh.Samples, sh.Boxes, sh.Condition, sh.SplitType, sh.Waybill, " & _
+          "t1.TechName AS Tech1, t2.TechName AS Tech2, " & _
+          "f1.FreezerName AS TempFreezer, c.ClientName " & _
+          "FROM (((((tblShipments sh " & _
+          "INNER JOIN tblStudies st ON sh.StudyID = st.StudyID) " & _
+          "LEFT JOIN tblTechs t1 ON st.Tech1ID = t1.TechID) " & _
+          "LEFT JOIN tblTechs t2 ON st.Tech2ID = t2.TechID) " & _
+          "LEFT JOIN tblFreezer f1 ON st.TempFreezerID = f1.FreezerID) " & _
+          "LEFT JOIN tblClients c ON st.ClientID = c.ClientID)"
+
+    ' SR filter
+    If Not IsNull(Me.txtFilterSR) And Trim(Me.txtFilterSR & "") <> "" Then
+        where = AddFilter(where, "sh.SR = '" & _
+                Replace(Trim(Me.txtFilterSR.Value), "'", "''") & "'")
+    End If
+
+    ' Protocol filter — checks both sponsor and client protocol
+    If Not IsNull(Me.cboFilterProtocol) And Trim(Me.cboFilterProtocol & "") <> "" Then
+        Dim proto As String
+        proto = Replace(Me.cboFilterProtocol.Value, "'", "''")
+        where = AddFilter(where, "(st.SponsorProtocol = '" & proto & "' " & _
+                "OR st.ClientProtocol = '" & proto & "')")
+    End If
+
+    ' Study Number filter
+    If Not IsNull(Me.cboFilterStudyNumber) And Trim(Me.cboFilterStudyNumber & "") <> "" Then
+        where = AddFilter(where, "st.StudyNumber = '" & _
+                Replace(Me.cboFilterStudyNumber.Value, "'", "''") & "'")
+    End If
+
+    ' Client filter
+    If Not IsNull(Me.cboFilterClient) And Trim(Me.cboFilterClient & "") <> "" Then
+        where = AddFilter(where, "c.ClientName = '" & _
+                Replace(Me.cboFilterClient.Value, "'", "''") & "'")
+    End If
+
+    ' Waybill filter
+    If Not IsNull(Me.cboFilterWaybill) And Trim(Me.cboFilterWaybill & "") <> "" Then
+        where = AddFilter(where, "sh.Waybill = '" & _
+                Replace(Me.cboFilterWaybill.Value, "'", "''") & "'")
+    End If
+
+    ' Date range filter
+    If IsDate(Me.txtDateFrom) Then
+        where = AddFilter(where, "sh.DeliveryDate >= #" & _
+                Format(CDate(Me.txtDateFrom.Value), "mm/dd/yyyy") & "#")
+    End If
+    If IsDate(Me.txtDateTo) Then
+        where = AddFilter(where, "sh.DeliveryDate <= #" & _
+                Format(CDate(Me.txtDateTo.Value), "mm/dd/yyyy") & "#")
+    End If
+
+    If where <> "" Then sql = sql & " WHERE " & where
+    sql = sql & " ORDER BY sh.DeliveryDate DESC, sh.ShipmentID DESC"
+
+    Me.subShipmentsList.Form.RecordSource = sql
+End Sub
+
+Private Function AddFilter(current As String, newCondition As String) As String
+    If current = "" Then
+        AddFilter = newCondition
+    Else
+        AddFilter = current & " AND " & newCondition
+    End If
+End Function
+
+' =============================================
+' CLEAR FILTERS
+' =============================================
+Private Sub cmdClearFilters_Click()
+    Me.txtFilterSR.Value        = ""
+    Me.cboFilterProtocol.Value  = Null
+    Me.cboFilterStudyNumber.Value = Null
+    Me.cboFilterClient.Value    = Null
+    Me.cboFilterWaybill.Value   = Null
+    Me.txtDateFrom.Value        = Date - 7
+    Me.txtDateTo.Value          = Date
+
+    ' Reset combobox row sources
+    Me.cboFilterProtocol.RowSource = _
+        "SELECT DISTINCT SponsorProtocol AS Protocol FROM tblStudies " & _
+        "WHERE Len(Trim(Nz(SponsorProtocol,"""")))>0 " & _
+        "UNION SELECT DISTINCT ClientProtocol FROM tblStudies " & _
+        "WHERE Len(Trim(Nz(ClientProtocol,"""")))>0 ORDER BY Protocol"
+    Me.cboFilterStudyNumber.RowSource = _
+        "SELECT DISTINCT StudyNumber FROM tblStudies " & _
+        "WHERE Len(Trim(Nz(StudyNumber,"""")))>0 ORDER BY StudyNumber"
+    Me.cboFilterClient.RowSource = _
+        "SELECT DISTINCT ClientName FROM tblClients ORDER BY ClientName"
+    Me.cboFilterWaybill.RowSource = _
+        "SELECT DISTINCT Waybill FROM tblShipments " & _
+        "WHERE Len(Trim(Nz(Waybill,"""")))>0 ORDER BY Waybill"
+
+    ApplyFilters
+End Sub
+
+' =============================================
+' ADD SHIPMENT
+' =============================================
+Private Sub cmdAdd_Click()
+    DoCmd.OpenForm "frmLogShipment"
+End Sub
+
+' =============================================
+' EDIT SHIPMENT
+' =============================================
+Private Sub cmdEdit_Click()
+    ' Check exactly one row selected
+    Dim selectedIDs() As Long
+    Dim count         As Long
+    GetSelectedIDs selectedIDs, count
+
+    If count = 0 Then
+        MsgBox "Please select a shipment to edit.", vbExclamation
+        Exit Sub
+    End If
+    If count > 1 Then
+        MsgBox "Please select only one shipment to edit.", vbExclamation
+        Exit Sub
+    End If
+
+    ' Open frmLogShipment as dialog in edit mode
+    DoCmd.OpenForm "frmLogShipment", , , , , acDialog
+    Form_frmLogShipment.LoadForEdit selectedIDs(0)
+
+    ' Refresh after edit window closes
+    ApplyFilters
+End Sub
+
+' =============================================
+' DELETE SHIPMENT
+' =============================================
+Private Sub cmdDelete_Click()
+    Dim selectedIDs() As Long
+    Dim count         As Long
+    GetSelectedIDs selectedIDs, count
+
+    If count = 0 Then
+        MsgBox "Please select at least one shipment to delete.", vbExclamation
+        Exit Sub
+    End If
+
+    Dim msg As String
+    If count = 1 Then
+        msg = "Delete this shipment permanently?"
+    Else
+        msg = "Delete these " & count & " shipments permanently?"
+    End If
+
+    If MsgBox(msg, vbYesNo + vbCritical, "Confirm Delete") = vbNo Then Exit Sub
+
+    Dim db As DAO.Database
+    Set db = CurrentDb()
+
+    Dim i As Long
+    For i = 0 To count - 1
+        db.Execute "DELETE FROM tblShipments WHERE ShipmentID = " & _
+                   selectedIDs(i), dbFailOnError
+    Next i
+
+    ApplyFilters
+    MsgBox count & " shipment(s) deleted.", vbInformation
+End Sub
+
+' =============================================
+' SEND CONFIRMATION EMAIL
+' =============================================
+Private Sub cmdSendEmail_Click()
+    Dim selectedIDs() As Long
+    Dim count         As Long
+    GetSelectedIDs selectedIDs, count
+
+    If count = 0 Then
+        MsgBox "Please select at least one shipment.", vbExclamation
+        Exit Sub
+    End If
+
+    ' Build shipment data and validate same protocol
+    Dim db          As DAO.Database
+    Dim rs          As DAO.Recordset
+    Set db = CurrentDb()
+
+    Dim firstProtocol   As String
+    Dim monitorName     As String
+    Dim monitorEmail    As String
+    Dim directorEmail   As String
+    Dim firstDirector   As String
+    Dim ccField         As String
+    Dim sciEmails       As String
+    Dim tableRows       As String
+    Dim i               As Long
+
+    For i = 0 To count - 1
+        Set rs = db.OpenRecordset( _
+            "SELECT sh.ShipmentID, sh.DeliveryDate, sh.SR, sh.Samples, sh.Waybill, " & _
+            "st.StudyNumber, st.SponsorProtocol, st.Matrix, " & _
+            "st.Monitor, st.MonitorEmail, " & _
+            "st.StudyDirector, st.StudyDirectorEmail, " & _
+            "st.Scientist, st.ScientistEmail, st.CC " & _
+            "FROM tblShipments sh " & _
+            "INNER JOIN tblStudies st ON sh.StudyID = st.StudyID " & _
+            "WHERE sh.ShipmentID = " & selectedIDs(i))
+
+        If rs.EOF Then
+            MsgBox "Could not find shipment data.", vbExclamation
+            rs.Close
+            Exit Sub
+        End If
+
+        ' First row — capture protocol and contact info
+        If i = 0 Then
+            firstProtocol  = Nz(rs!SponsorProtocol, "")
+            monitorName    = Nz(rs!Monitor, "")
+            monitorEmail   = Nz(rs!MonitorEmail, "")
+            firstDirector  = Nz(rs!StudyDirectorEmail, "")
+            directorEmail  = Nz(rs!StudyDirectorEmail, "")
+            ccField        = Nz(rs!CC, "")
+            sciEmails      = Nz(rs!ScientistEmail, "")
+        Else
+            ' Check same protocol
+            If Nz(rs!SponsorProtocol, "") <> firstProtocol Then
+                MsgBox "All selected shipments must belong to the same protocol.", _
+                       vbExclamation
+                rs.Close
+                Exit Sub
+            End If
+
+            ' Check director consistency
+            If Nz(rs!StudyDirectorEmail, "") <> firstDirector Then
+                If MsgBox("Study Director is different across the selection." & vbCrLf & _
+                          "Do you want to continue?", _
+                          vbYesNo + vbExclamation, "Different Study Director") = vbNo Then
+                    rs.Close
+                    Exit Sub
+                End If
+            End If
+
+            ' Collect unique scientist emails
+            Dim sciEmail As String
+            sciEmail = Nz(rs!ScientistEmail, "")
+            If sciEmail <> "" And InStr(1, sciEmails, sciEmail, vbTextCompare) = 0 Then
+                If sciEmails <> "" Then sciEmails = sciEmails & ";"
+                sciEmails = sciEmails & sciEmail
+            End If
+
+            ' Collect unique CC values
+            Dim newCC As String
+            newCC = Nz(rs!CC, "")
+            If newCC <> "" And InStr(1, ccField, newCC, vbTextCompare) = 0 Then
+                If ccField <> "" Then ccField = ccField & ";"
+                ccField = ccField & newCC
+            End If
+        End If
+
+        ' Build table row
+        tableRows = tableRows & "<tr>" & _
+            "<td>" & Format(rs!DeliveryDate, "dd-mmm-yyyy") & "</td>" & _
+            "<td>" & Nz(rs!SR, "")          & "</td>" & _
+            "<td>" & Nz(rs!StudyNumber, "")  & "</td>" & _
+            "<td>" & Nz(rs!Matrix, "")       & "</td>" & _
+            "<td>" & Nz(rs!Samples, "")      & "</td>" & _
+            "<td>" & Nz(rs!Waybill, "")      & "</td>" & _
+            "</tr>"
+
+        rs.Close
+    Next i
+
+    ' Extract first name from "Lastname, Firstname"
+    Dim firstName As String
+    If InStr(monitorName, ",") > 0 Then
+        firstName = Trim(Mid(monitorName, InStr(monitorName, ",") + 1))
+    Else
+        firstName = monitorName
+    End If
+
+    ' Build CC list — unique emails only
+    Dim finalCC As String
+    finalCC = directorEmail
+    If sciEmails <> "" Then
+        If finalCC <> "" Then finalCC = finalCC & ";"
+        finalCC = finalCC & sciEmails
+    End If
+    If ccField <> "" Then
+        If finalCC <> "" Then finalCC = finalCC & ";"
+        finalCC = finalCC & ccField
+    End If
+
+    ' Build HTML email
+    Dim html As String
+    html = "<html><body style='font-family:Calibri;font-size:11pt;'>"
+    html = html & "<p>Hi " & firstName & ",</p>"
+    html = html & "<p>This email is to inform you that the following samples for study <b>" & _
+                  firstProtocol & "</b> were received at CRL Montreal.</p>"
+    html = html & "<table border='1' cellpadding='5' cellspacing='0' " & _
+                  "style='border-collapse:collapse;font-size:10pt;'>"
+    html = html & "<tr style='background:#f2f2f2;font-weight:bold;'>"
+    html = html & "<td>Date</td><td>SR</td><td>Study Number</td>" & _
+                  "<td>Matrix</td><td>Number of Samples</td><td>Waybill</td>"
+    html = html & "</tr>"
+    html = html & tableRows
+    html = html & "</table>"
+    html = html & "<p>Once the samples are verified, you might be contacted by us or " & _
+                  "the scientist in charge of the study to clarify discrepancies or " & _
+                  "address issues, if any.</p>"
+    html = html & "<p>If any pertinent information regarding samples were not included " & _
+                  "on sample manifest (e.g. samples thawed prior to shipment, deviation " & _
+                  "during collection, etc.) please inform CRL MTL in a timely manner to " & _
+                  "allow adequate stability assessment by the scientist.</p>"
+    html = html & "</body></html>"
+
+    ' Open Outlook draft
+    Dim olApp  As Object
+    Dim olMail As Object
+    Set olApp  = CreateObject("Outlook.Application")
+    Set olMail = olApp.CreateItem(0)
+    With olMail
+        .To       = monitorEmail
+        .CC       = finalCC
+        .Subject  = "Confirmation of Samples Received Protocol# " & firstProtocol
+        .htmlBody = html
+        .Display
+    End With
+End Sub
+
+' =============================================
+' GET SELECTED SHIPMENT IDs FROM SUBFORM
+' =============================================
+Private Sub GetSelectedIDs(ByRef ids() As Long, ByRef count As Long)
+    count = 0
+    ReDim ids(0)
+
+    Dim frm As Form
+    Set frm = Me.subShipmentsList.Form
+
+    Dim rs As DAO.Recordset
+    Set rs = frm.RecordsetClone
+    rs.MoveFirst
+
+    Do While Not rs.EOF
+        ' Check if this row is selected in the datasheet
+        If frm.SelTop <= (rs.AbsolutePosition + 1) And _
+           frm.SelTop + frm.SelHeight - 1 >= (rs.AbsolutePosition + 1) Then
+            ReDim Preserve ids(count)
+            ids(count) = rs!ShipmentID
+            count = count + 1
+        End If
+        rs.MoveNext
+    Loop
+    rs.Close
+End Sub
+
+' =============================================
+' REFRESH
+' =============================================
+Private Sub cmdRefresh_Click()
+    ApplyFilters
+End Sub
+
+' =============================================
+' CLOSE
+' =============================================
+Private Sub cmdClose_Click()
+    DoCmd.Close acForm, Me.Name
+End Sub
