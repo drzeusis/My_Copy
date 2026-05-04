@@ -1,0 +1,43 @@
+Private Sub SendArrivalEmail()
+    Dim recipients As String
+    recipients = GetArrivalRecipients()
+    If recipients = "" Then
+        MsgBox "No email recipients found in Settings.", vbExclamation
+        Exit Sub
+    End If
+
+    Dim html As String
+    html = "<html><body style='font-family:Calibri;font-size:11pt;'>"
+    html = html & "<p>Hi all,</p>"
+    html = html & "<p>The following shipments have been received:</p>"
+    html = html & "<table border='1' cellpadding='5' cellspacing='0' " & _
+                  "style='border-collapse:collapse;font-size:10pt;'>"
+    html = html & "<tr style='background:#f2f2f2;font-weight:bold;'>"
+    html = html & "<td>SR</td><td>Study Number</td><td>Matrix</td>" & _
+                  "<td>Cartons</td><td>Tech(s)</td></tr>"
+
+    Dim i As Long
+    For i = 0 To pendingCount - 1
+        html = html & "<tr>" & _
+            "<td>" & pendingShipments(i).SR          & "</td>" & _
+            "<td>" & pendingShipments(i).StudyNumber  & "</td>" & _
+            "<td>" & pendingShipments(i).Matrix       & "</td>" & _
+            "<td>" & pendingShipments(i).Cartons      & "</td>" & _
+            "<td>" & TechDisplay(pendingShipments(i).Tech1, _
+                                 pendingShipments(i).Tech2)     & "</td>" & _
+            "</tr>"
+    Next i
+
+    html = html & "</table></body></html>"
+
+    Dim olApp  As Object
+    Dim olMail As Object
+    Set olApp  = CreateObject("Outlook.Application")
+    Set olMail = olApp.CreateItem(0)
+    With olMail
+        .To       = recipients
+        .Subject  = "Shipment Received - " & Format(Me.txtDate.Value, "dd/mm/yyyy")
+        .htmlBody = html
+        .Display
+    End With
+End Sub
