@@ -1,0 +1,25 @@
+WriteLog calls across all forms
+frmLogShipment — SaveNew (inside the loop, after rs.Update):
+vbWriteLog "Add Shipment", "frmLogShipment", _
+    "SR: " & pendingShipments(i).SR & _
+    " Study: " & pendingShipments(i).StudyNumber
+frmLogShipment — SaveEdit:
+vbWriteLog "Edit Shipment", "frmLogShipment", _
+    "ShipmentID: " & editShipmentID & " SR: " & newSR
+frmShipments — cmdDelete (inside the loop):
+vbWriteLog "Delete Shipment", "frmShipments", _
+    "ShipmentID: " & selectedIDs(i)
+frmShipments — cmdSendEmail (after .Display):
+vbWriteLog "Send Confirmation Email", "frmShipments", _
+    "Protocol: " & firstProtocol & " Monitor: " & monitorEmail
+frmLogShipment — SendArrivalEmail (after .Display):
+vbWriteLog "Send Arrival Email", "frmLogShipment", _
+    "Date: " & Format(Me.txtDate.Value, "dd/mm/yyyy")
+frmStudies — cmdSave:
+vbWriteLog "Save Study", "frmStudies", _
+    "StudyID: " & Me.StudyID & _
+    " Protocol: " & Nz(Me.txtSponsorProtocol.Value, "")
+frmStudies — cmdDelete:
+vbWriteLog "Delete Study", "frmStudies", _
+    "StudyID: " & Me.StudyID & _
+    " Protocol: " & Nz(Me.txtSponsorProtocol.Value, "")
