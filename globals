@@ -1,0 +1,45 @@
+Option Compare Database
+Option Explicit
+
+Public gCurrentUser   As String
+Public gCurrentTechID As Long
+Public gIsAdmin       As Boolean
+
+Public Sub InitialiseUser()
+    Dim winUser As String
+    winUser = Environ("USERNAME")
+
+    Dim db As DAO.Database
+    Dim rs As DAO.Recordset
+    Set db = CurrentDb()
+    Set rs = db.OpenRecordset( _
+        "SELECT TechID, TechName, IsAdmin FROM tblTechs " & _
+        "WHERE TechName='" & Replace(winUser, "'", "''") & "'")
+
+    If rs.EOF Then
+        gCurrentUser   = winUser
+        gCurrentTechID = 0
+        gIsAdmin       = False
+    Else
+        gCurrentUser   = rs!TechName
+        gCurrentTechID = rs!TechID
+        gIsAdmin       = Nz(rs!IsAdmin, False)
+    End If
+    rs.Close
+End Sub
+
+Public Sub WriteLog(action As String, formName As String, detail As String)
+    If gCurrentUser = "" Then Exit Sub
+    Dim db As DAO.Database
+    Dim rs As DAO.Recordset
+    Set db = CurrentDb()
+    Set rs = db.OpenRecordset("tblLog", dbOpenDynaset)
+    rs.AddNew
+        rs!LogDate   = Now()
+        rs!LogUser   = gCurrentUser
+        rs!LogAction = action
+        rs!LogForm   = formName
+        rs!LogDetail = detail
+    rs.Update
+    rs.Close
+End Sub
