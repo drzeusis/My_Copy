@@ -1,0 +1,13 @@
+Private Sub Form_Load()
+    If Not gIsAdmin Then
+        MsgBox "You do not have permission to access Settings.", _
+               vbCritical, "Access Denied"
+        DoCmd.Close acForm, Me.Name
+        Exit Sub
+    End If
+    Me.subClients.Form.Requery
+    Me.subTechs.Form.Requery
+    Me.subStudyTypes.Form.Requery
+    Me.subSpecies.Form.Requery
+    Me.subFreezer.Form.Requery
+End Sub
