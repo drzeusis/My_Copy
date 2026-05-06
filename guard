@@ -1,0 +1,9 @@
+Guard every form against direct access
+Add this to Form_Load of every form (frmLogShipment, frmStudies, frmShipments, frmSettings, frmAdmin) as the very first lines:
+vb
+
+If gCurrentTechID = 0 Then
+    MsgBox "You are not authorised to access this form.", vbCritical, "Access Denied"
+    DoCmd.Close acForm, Me.Name
+    Exit Sub
+End If
