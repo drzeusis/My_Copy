@@ -1,0 +1,53 @@
+Option Compare Database
+Option Explicit
+
+Private Sub Form_Load()
+    InitialiseUser
+
+    If gCurrentTechID = 0 Then
+        MsgBox "Your Windows account (" & Environ("USERNAME") & ") is not registered " & _
+               "in the system." & vbCrLf & vbCrLf & _
+               "Please contact your administrator to get access.", _
+               vbCritical, "Access Denied"
+        DisableAll
+        Exit Sub
+    End If
+
+    Me.cmdAdmin.Visible = gIsAdmin
+    WriteLog "Open", "frmMain", gCurrentUser & " opened the application"
+End Sub
+
+Private Sub DisableAll()
+    Me.cmdLogShipment.Enabled = False
+    Me.cmdStudies.Enabled     = False
+    Me.cmdShipments.Enabled   = False
+    Me.cmdSettings.Enabled    = False
+    Me.cmdAdmin.Visible       = False
+End Sub
+
+Private Sub cmdLogShipment_Click()
+    DoCmd.OpenForm "frmLogShipment"
+End Sub
+
+Private Sub cmdStudies_Click()
+    DoCmd.OpenForm "frmStudies"
+End Sub
+
+Private Sub cmdShipments_Click()
+    DoCmd.OpenForm "frmShipments"
+End Sub
+
+Private Sub cmdSettings_Click()
+    DoCmd.OpenForm "frmSettings"
+End Sub
+
+Private Sub cmdAdmin_Click()
+    DoCmd.OpenForm "frmAdmin"
+End Sub
+
+Private Sub cmdExit_Click()
+    If MsgBox("Close the database?", vbYesNo + vbQuestion, "Exit") = vbYes Then
+        WriteLog "Exit", "frmMain", gCurrentUser & " closed the application"
+        Application.Quit acSaveYes
+    End If
+End Sub
