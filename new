@@ -1,0 +1,14 @@
+4. tblLog — new table in backend
+FieldTypeNotesLogIDAutoNumberPKLogDateDate/TimeLogUserShort Text 100LogActionShort Text 50Add, Edit, Delete, Email, Open, ExitLogFormShort Text 50LogDetailLong Text
+
+
+10. frmAdmin — simple log viewer (admin only)
+A simple read-only form so admins can view the log.
+Controls
+
+subLog — subform, datasheet, record source: SELECT * FROM tblLog ORDER BY LogDate DESC
+txtFilterUser — filter by user
+txtDateFrom / txtDateTo — date range
+cmdFilter — apply filters
+cmdClearFilters
+cmdClose
