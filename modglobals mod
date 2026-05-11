@@ -1,0 +1,25 @@
+Public Sub InitialiseUser()
+    Dim winUser As String
+    winUser = Environ("USERNAME")
+
+    Dim db As DAO.Database
+    Dim rs As DAO.Recordset
+    Set db = CurrentDb()
+    Set rs = db.OpenRecordset( _
+        "SELECT TechID, TechName, IsAdmin FROM tblTechs " & _
+        "WHERE CRLId='" & Replace(winUser, "'", "''") & "'")
+
+    If rs.EOF Then
+        gCurrentUser   = winUser
+        gCurrentTechID = 0
+        gIsAdmin       = False
+    Else
+        gCurrentUser   = rs!TechName
+        gCurrentTechID = rs!TechID
+        gIsAdmin       = Nz(rs!IsAdmin, False)
+    End If
+    rs.Close
+End Sub
+
+
+
