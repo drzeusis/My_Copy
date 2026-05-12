@@ -1,0 +1,121 @@
+frmAdmin — Log Viewer
+Form Properties
+PropertyValueRecord SelectorsNoNavigation ButtonsNoHas ModuleYesCaptionActivity Log
+Controls
+ControlTypeNotestxtFilterUserText Boxfilter by usertxtDateFromText Boxdate range starttxtDateToText Boxdate range endcboFilterActionCombo Boxfilter by action typecmdFilterButtonApply FilterscmdClearFiltersButtoncmdExportButtonexport to ExcelcmdCloseButtonsubLogSubformsource: fsubLoglblRecordCountLabelshows how many records found
+cboFilterAction Row Source:
+"Open";"Exit";"Add Shipment";"Edit Shipment";"Delete Shipment";"Send Arrival Email";"Send Confirmation Email";"Save Study";"Delete Study"
+
+fsubLog
+PropertyValueDefault ViewDatasheetAllow EditsNoAllow AdditionsNoAllow DeletionsNo
+Columns:
+Column NameBound FieldcolLogDateLogDatecolLogUserLogUsercolLogActionLogActioncolLogFormLogFormcolLogDetailLogDetail
+Set colLogDate format to dd/mm/yyyy hh:nn:ss so time shows.
+
+frmAdmin VBA
+vbOption Compare Database
+Option Explicit
+
+Private Sub Form_Load()
+    If Not gIsAdmin Then
+        MsgBox "Access denied.", vbCritical, "Access Denied"
+        DoCmd.Close acForm, Me.Name
+        Exit Sub
+    End If
+    Me.txtDateFrom.Value = Date - 30
+    Me.txtDateTo.Value   = Date
+    ApplyFilters
+End Sub
+
+Private Sub cmdFilter_Click()
+    ApplyFilters
+End Sub
+
+Private Sub ApplyFilters()
+    Dim sql   As String
+    Dim where As String
+
+    sql = "SELECT LogID, LogDate, LogUser, LogAction, LogForm, LogDetail " & _
+          "FROM tblLog"
+
+    If Not IsNull(Me.txtFilterUser) And Trim(Me.txtFilterUser & "") <> "" Then
+        where = AddFilter(where, "LogUser LIKE '*" & _
+                Replace(Trim(Me.txtFilterUser.Value), "'", "''") & "*'")
+    End If
+    If Not IsNull(Me.cboFilterAction) And Trim(Me.cboFilterAction & "") <> "" Then
+        where = AddFilter(where, "LogAction='" & _
+                Replace(Me.cboFilterAction.Value, "'", "''") & "'")
+    End If
+    If IsDate(Me.txtDateFrom) Then
+        where = AddFilter(where, "LogDate >= #" & _
+                Format(CDate(Me.txtDateFrom.Value), "mm/dd/yyyy") & "#")
+    End If
+    If IsDate(Me.txtDateTo) Then
+        where = AddFilter(where, "LogDate < #" & _
+                Format(CDate(Me.txtDateTo.Value) + 1, "mm/dd/yyyy") & "#")
+    End If
+
+    If where <> "" Then sql = sql & " WHERE " & where
+    sql = sql & " ORDER BY LogDate DESC"
+    Me.subLog.Form.RecordSource = sql
+
+    ' update record count label
+    Me.lblRecordCount.Caption = Me.subLog.Form.RecordsetClone.RecordCount & " records"
+End Sub
+
+Private Function AddFilter(current As String, newCondition As String) As String
+    If current = "" Then
+        AddFilter = newCondition
+    Else
+        AddFilter = current & " AND " & newCondition
+    End If
+End Function
+
+Private Sub cmdClearFilters_Click()
+    Me.txtFilterUser.Value    = ""
+    Me.cboFilterAction.Value  = Null
+    Me.txtDateFrom.Value      = Date - 30
+    Me.txtDateTo.Value        = Date
+    ApplyFilters
+End Sub
+
+Private Sub cmdExport_Click()
+    Dim exportPath As String
+    exportPath = CurrentProject.Path & "\ActivityLog_" & _
+                 Format(Now(), "yyyymmdd_hhnnss") & ".xlsx"
+
+    DoCmd.TransferSpreadsheet _
+        acExport, _
+        acSpreadsheetTypeExcel12Xml, _
+        Me.subLog.Form.RecordSource, _
+        exportPath, _
+        True
+
+    MsgBox "Log exported to:" & vbCrLf & exportPath, vbInformation, "Export Complete"
+    WriteLog "Export Log", "frmAdmin", "Exported to: " & exportPath
+End Sub
+
+Private Sub cmdClose_Click()
+    DoCmd.Close acForm, Me.Name
+End Sub
+
+Record Count fix
+RecordsetClone.RecordCount only returns accurate count after MoveLast — add this helper:
+vbPrivate Function GetRecordCount() As Long
+    Dim rs As DAO.Recordset
+    Set rs = Me.subLog.Form.RecordsetClone
+    If rs.BOF And rs.EOF Then
+        GetRecordCount = 0
+    Else
+        rs.MoveLast
+        GetRecordCount = rs.RecordCount
+    End If
+    rs.Close
+End Function
+Then in ApplyFilters replace the label line with:
+vbMe.lblRecordCount.Caption = GetRecordCount() & " records"
+
+frmMain — wire up cmdAdmin
+vbPrivate Sub cmdAdmin_Click()
+    DoCmd.OpenForm "frmAdmin"
+End Sub
