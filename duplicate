@@ -1,0 +1,111 @@
+Private Sub cmdDuplicate_Click()
+    If isEditing Or isNew Then
+        MsgBox "Please save or cancel your current changes first.", _
+               vbExclamation, "Unsaved Changes"
+        Exit Sub
+    End If
+
+    ' Store current field values before switching to new record
+    Dim dupSponsorProtocol    As String
+    Dim dupClientProtocol     As String
+    Dim dupStudyNumber        As String
+    Dim dupMatrix             As String
+    Dim dupStorageTemp        As String
+    Dim dupStudyDirector      As String
+    Dim dupStudyDirectorEmail As String
+    Dim dupScientist          As String
+    Dim dupScientistEmail     As String
+    Dim dupMonitor            As String
+    Dim dupMonitorEmail       As String
+    Dim dupCC                 As String
+    Dim dupComments           As String
+    Dim dupClientID           As Variant
+    Dim dupStudyTypeID        As Variant
+    Dim dupTech1ID            As Variant
+    Dim dupTech2ID            As Variant
+    Dim dupSpeciesID          As Variant
+    Dim dupTempFreezerID      As Variant
+    Dim dupFreezerID          As Variant
+
+    dupSponsorProtocol    = Nz(Me.txtSponsorProtocol.Value, "")
+    dupClientProtocol     = Nz(Me.txtClientProtocol.Value, "")
+    dupStudyNumber        = Nz(Me.txtStudyNumber.Value, "")
+    dupMatrix             = Nz(Me.txtMatrix.Value, "")
+    dupStorageTemp        = Nz(Me.cboStorageTemp.Value, "")
+    dupStudyDirector      = Nz(Me.txtStudyDirector.Value, "")
+    dupStudyDirectorEmail = Nz(Me.txtStudyDirectorEmail.Value, "")
+    dupScientist          = Nz(Me.txtScientist.Value, "")
+    dupScientistEmail     = Nz(Me.txtScientistEmail.Value, "")
+    dupMonitor            = Nz(Me.txtMonitor.Value, "")
+    dupMonitorEmail       = Nz(Me.txtMonitorEmail.Value, "")
+    dupCC                 = Nz(Me.txtCC.Value, "")
+    dupComments           = Nz(Me.txtComments.Value, "")
+    dupClientID           = Me.cboClientID.Value
+    dupStudyTypeID        = Me.cboStudyTypeID.Value
+    dupTech1ID            = Me.cboTech1ID.Value
+    dupTech2ID            = Me.cboTech2ID.Value
+    dupSpeciesID          = Me.cboSpeciesID.Value
+    dupTempFreezerID      = Me.cboTempFreezerID.Value
+    dupFreezerID          = Me.cboFreezerID.Value
+
+    ' Move to new record and fill with duplicated values
+    DoCmd.GoToRecord , , acNewRec
+
+    Me.txtSponsorProtocol.Value    = dupSponsorProtocol
+    Me.txtClientProtocol.Value     = dupClientProtocol
+    Me.txtStudyNumber.Value        = dupStudyNumber
+    Me.txtMatrix.Value             = dupMatrix
+    Me.cboStorageTemp.Value        = dupStorageTemp
+    Me.txtStudyDirector.Value      = dupStudyDirector
+    Me.txtStudyDirectorEmail.Value = dupStudyDirectorEmail
+    Me.txtScientist.Value          = dupScientist
+    Me.txtScientistEmail.Value     = dupScientistEmail
+    Me.txtMonitor.Value            = dupMonitor
+    Me.txtMonitorEmail.Value       = dupMonitorEmail
+    Me.txtCC.Value                 = dupCC
+    Me.txtComments.Value           = dupComments
+    Me.cboClientID.Value           = dupClientID
+    Me.cboStudyTypeID.Value        = dupStudyTypeID
+    Me.cboTech1ID.Value            = dupTech1ID
+    Me.cboTech2ID.Value            = dupTech2ID
+    Me.cboSpeciesID.Value          = dupSpeciesID
+    Me.cboTempFreezerID.Value      = dupTempFreezerID
+    Me.cboFreezerID.Value          = dupFreezerID
+
+    selectedStudyID = 0
+    isNew           = True
+    isEditing       = False
+    SetFormState "editing"
+
+    Me.lblStatus.Caption   = "New Study (Duplicated)"
+    Me.lblStatus.ForeColor = vbBlue
+
+    MsgBox "Fields copied from selected study. Make your changes and click Save.", _
+           vbInformation, "Duplicate Study"
+End Sub
+
+
+Private Sub cmdSave_Click()
+    If Not ValidateForm() Then Exit Sub
+    RunCommand acCmdSaveRecord
+    Me.subStudiesList.Form.Requery
+    Me.subStudyShipments.Form.Requery
+    RefreshFilterSources
+    isEditing = False
+    isNew     = False
+    If selectedStudyID = 0 Then selectedStudyID = Me.StudyID
+    SetFormState "selected"
+
+    ' *** REPLACE existing WriteLog with this ***
+    If InStr(Me.lblStatus.Caption, "Duplicated") > 0 Then
+        WriteLog "Duplicate Study", "frmStudies", _
+            "New StudyID: " & Me.StudyID & _
+            " Protocol: " & Nz(Me.txtSponsorProtocol.Value, "")
+    Else
+        WriteLog "Save Study", "frmStudies", _
+            "StudyID: " & Me.StudyID & _
+            " Protocol: " & Nz(Me.txtSponsorProtocol.Value, "")
+    End If
+
+    MsgBox "Study saved successfully.", vbInformation, "Saved"
+End Sub
