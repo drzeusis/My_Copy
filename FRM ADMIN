@@ -1,19 +1,4 @@
-frmAdmin — Log Viewer
-Form Properties
-PropertyValueRecord SelectorsNoNavigation ButtonsNoHas ModuleYesCaptionActivity Log
-Controls
-ControlTypeNotestxtFilterUserText Boxfilter by usertxtDateFromText Boxdate range starttxtDateToText Boxdate range endcboFilterActionCombo Boxfilter by action typecmdFilterButtonApply FilterscmdClearFiltersButtoncmdExportButtonexport to ExcelcmdCloseButtonsubLogSubformsource: fsubLoglblRecordCountLabelshows how many records found
-cboFilterAction Row Source:
-"Open";"Exit";"Add Shipment";"Edit Shipment";"Delete Shipment";"Send Arrival Email";"Send Confirmation Email";"Save Study";"Delete Study"
-
-fsubLog
-PropertyValueDefault ViewDatasheetAllow EditsNoAllow AdditionsNoAllow DeletionsNo
-Columns:
-Column NameBound FieldcolLogDateLogDatecolLogUserLogUsercolLogActionLogActioncolLogFormLogFormcolLogDetailLogDetail
-Set colLogDate format to dd/mm/yyyy hh:nn:ss so time shows.
-
-frmAdmin VBA
-vbOption Compare Database
+fOption Compare Database
 Option Explicit
 
 Private Sub Form_Load()
@@ -99,23 +84,18 @@ Private Sub cmdClose_Click()
     DoCmd.Close acForm, Me.Name
 End Sub
 
-Record Count fix
-RecordsetClone.RecordCount only returns accurate count after MoveLast — add this helper:
-vbPrivate Function GetRecordCount() As Long
-    Dim rs As DAO.Recordset
-    Set rs = Me.subLog.Form.RecordsetClone
-    If rs.BOF And rs.EOF Then
-        GetRecordCount = 0
-    Else
-        rs.MoveLast
-        GetRecordCount = rs.RecordCount
-    End If
-    rs.Close
-End Function
-Then in ApplyFilters replace the label line with:
-vbMe.lblRecordCount.Caption = GetRecordCount() & " records"
 
-frmMain — wire up cmdAdmin
-vbPrivate Sub cmdAdmin_Click()
-    DoCmd.OpenForm "frmAdmin"
+
+frmAdmin — remove these
+1. Delete the lblRecordCount control from the form in design view.
+2. Delete the GetRecordCount function entirely from the VBA.
+3. In ApplyFilters remove the last line:
+vb' DELETE THIS LINE:
+Me.lblRecordCount.Caption = GetRecordCount() & " records"
+So ApplyFilters ends cleanly at:
+vb    If where <> "" Then sql = sql & " WHERE " & where
+    sql = sql & " ORDER BY LogDate DESC"
+    Me.subLog.Form.RecordSource = sql
 End Sub
+
+That's it — everything else stays exactly as written. The export, filters, and close all remain unchanged.
