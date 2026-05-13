@@ -99,3 +99,9 @@ vb    If where <> "" Then sql = sql & " WHERE " & where
 End Sub
 
 That's it — everything else stays exactly as written. The export, filters, and close all remain unchanged.
+
+
+
+
+cboFilterAction Row Source:
+"Open";"Exit";"Add Shipment";"Edit Shipment";"Delete Shipment";"Send Arrival Email";"Send Confirmation Email";"Save Study";"Delete Study"
