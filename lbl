@@ -1,0 +1,597 @@
+Option Compare Database
+Option Explicit
+
+'-- Module-level state
+Private studyID        As Long
+Private studyNumber    As String
+Private filePath       As String
+Private headers()      As String
+Private headerCount    As Long
+Private sampleCount    As Long
+
+'-- Set by cmdNext, used by cmdGenerate
+Private chosenColNames(1 To 4) As String
+Private chosenColIdx(1 To 4)   As Long
+Private mSepColNames()         As String
+Private mSepColIdx()           As Long
+Private mSepCount              As Long
+
+' ──────────────────────────────────────────
+'  LOAD / RESET
+' ──────────────────────────────────────────
+Private Sub Form_Load()
+    If IsNull(Me.OpenArgs) Or Me.OpenArgs = "" Then
+        MsgBox "No study data passed.", vbCritical
+        DoCmd.Close acForm, Me.Name
+        Exit Sub
+    End If
+    Dim parts() As String
+    parts = Split(Me.OpenArgs, "|")
+    studyID    = CLng(parts(0))
+    studyNumber = parts(1)
+    Me.lblStudyNumber.Caption = "Study: " & studyNumber
+    ResetForm
+End Sub
+
+Private Sub ResetForm()
+    filePath    = ""
+    headerCount = 0
+    sampleCount = 0
+    mSepCount   = 0
+    Me.txtDropZone.Value              = "Drop Excel file here, or click Browse"
+    Me.lblSamplesFound.Caption        = "—"
+    Me.lblChosenCount.Caption         = "0 / 4 selected"
+    Me.lstChosenColumns.RowSource     = ""
+    Me.lstSeparationColumns.RowSource = ""
+    Me.lstChosenColumns.Enabled       = False
+    Me.lstSeparationColumns.Enabled   = False
+    Me.cmdAnalyse.Enabled             = False
+    Me.cmdNext.Enabled                = False
+    Me.cmdGenerate.Enabled            = False
+    Me.subInventoryGroups.Visible     = False
+    CurrentDb.Execute "DELETE FROM tblTempInventoryGroups", dbFailOnError
+End Sub
+
+' ──────────────────────────────────────────
+'  FILE DROP ZONE
+' ──────────────────────────────────────────
+Private Sub txtDropZone_OLEDragOver(Data As DataObject, Effect As Long, _
+    Button As Integer, Shift As Integer, X As Single, Y As Single, State As Integer)
+    If Data.GetFormat(15) Then Effect = 1
+End Sub
+
+Private Sub txtDropZone_OLEDragDrop(Data As DataObject, Effect As Long, _
+    Button As Integer, Shift As Integer, X As Single, Y As Single)
+    On Error GoTo errHandler
+    If Data.GetFormat(15) Then
+        Dim raw As String
+        raw = Data.GetData(15)
+        Dim nul As Long
+        nul = InStr(raw, Chr(0))
+        If nul > 1 Then raw = Left(raw, nul - 1)
+        raw = Trim(raw)
+        If Len(raw) > 0 Then HandleFileSelected raw
+    End If
+    Exit Sub
+errHandler:
+    MsgBox "Drag-drop failed. Use the Browse button.", vbExclamation
+End Sub
+
+Private Sub txtDropZone_Click()
+    BrowseForFile
+End Sub
+
+Private Sub cmdBrowse_Click()
+    BrowseForFile
+End Sub
+
+Private Sub BrowseForFile()
+    Dim fd As Object
+    Set fd = Application.FileDialog(3)
+    With fd
+        .Title = "Select Excel File"
+        .Filters.Clear
+        .Filters.Add "Excel Files", "*.xls; *.xlsx; *.xlsm"
+        .AllowMultiSelect = False
+        If .Show = -1 Then HandleFileSelected .SelectedItems(1)
+    End With
+End Sub
+
+Private Sub HandleFileSelected(path As String)
+    Dim ext As String
+    ext = LCase(Mid(path, InStrRev(path, ".")))
+    If ext <> ".xls" And ext <> ".xlsx" And ext <> ".xlsm" Then
+        MsgBox "Please select an Excel file (.xls, .xlsx, .xlsm).", vbExclamation
+        Exit Sub
+    End If
+    filePath = path
+    Me.txtDropZone.Value   = path
+    Me.cmdAnalyse.Enabled  = True
+    Me.cmdNext.Enabled     = False
+    Me.cmdGenerate.Enabled = False
+    Me.lstChosenColumns.Enabled       = False
+    Me.lstSeparationColumns.Enabled   = False
+    Me.lblSamplesFound.Caption        = "Click Analyse to process file"
+    Me.subInventoryGroups.Visible     = False
+End Sub
+
+' ──────────────────────────────────────────
+'  STEP 1 — ANALYSE
+' ──────────────────────────────────────────
+Private Sub cmdAnalyse_Click()
+    On Error GoTo errHandler
+
+    Me.cmdAnalyse.Enabled = False
+    Me.lblSamplesFound.Caption = "Reading file…"
+    DoEvents
+
+    Dim xlApp As Object, xlWb As Object, xlWs As Object
+    Set xlApp = CreateObject("Excel.Application")
+    xlApp.Visible       = False
+    xlApp.DisplayAlerts = False
+    Set xlWb = xlApp.Workbooks.Open(filePath, ReadOnly:=True)
+    Set xlWs = xlWb.Sheets(1)
+
+    ' Last populated column in row 1
+    Dim lastCol As Long
+    lastCol = xlWs.Cells(1, xlWs.Columns.Count).End(-4159).Column  ' xlToLeft
+
+    ' Last data row (col A)
+    Dim lastRow As Long
+    lastRow = xlWs.Cells(xlWs.Rows.Count, 1).End(-4162).Row        ' xlUp
+    sampleCount = lastRow - 1
+
+    ' Read non-empty header cells
+    Dim c As Long
+    headerCount = 0
+    ReDim headers(1 To lastCol)
+    For c = 1 To lastCol
+        Dim h As String
+        h = Trim(CStr(Nz(xlWs.Cells(1, c).Value, "")))
+        If h <> "" Then
+            headerCount = headerCount + 1
+            headers(headerCount) = h
+        End If
+    Next c
+    ReDim Preserve headers(1 To headerCount)
+
+    xlWb.Close False
+    xlApp.Quit
+    Set xlWs = Nothing: Set xlWb = Nothing: Set xlApp = Nothing
+
+    ' Build listbox row sources
+    Dim src As String, i As Long
+    For i = 1 To headerCount
+        If src <> "" Then src = src & ";"
+        src = src & headers(i)
+    Next i
+    Me.lstChosenColumns.RowSource     = src
+    Me.lstSeparationColumns.RowSource = src
+    Me.lstChosenColumns.Enabled       = True
+    Me.lstSeparationColumns.Enabled   = True
+    Me.lblSamplesFound.Caption        = sampleCount & " samples found"
+    Me.cmdAnalyse.Enabled             = True
+    Me.lblChosenCount.Caption         = "0 / 4 selected"
+    Exit Sub
+
+errHandler:
+    On Error Resume Next
+    xlWb.Close False: xlApp.Quit
+    On Error GoTo 0
+    Me.cmdAnalyse.Enabled = True
+    Me.lblSamplesFound.Caption = "Error reading file"
+    MsgBox "Could not read the Excel file: " & Err.Description, vbCritical
+End Sub
+
+' ──────────────────────────────────────────
+'  COLUMN SELECTION
+' ──────────────────────────────────────────
+Private Sub lstChosenColumns_Click()
+    Dim n As Long, i As Long
+    For i = 0 To Me.lstChosenColumns.ListCount - 1
+        If Me.lstChosenColumns.Selected(i) Then n = n + 1
+    Next i
+    Me.lblChosenCount.Caption = n & " / 4 selected"
+    Me.cmdNext.Enabled = (n = 4)
+End Sub
+
+Private Sub lstSeparationColumns_Click()
+    ' No restriction — Next readiness depends only on chosen cols
+End Sub
+
+' ──────────────────────────────────────────
+'  STEP 2 — NEXT (group samples)
+' ──────────────────────────────────────────
+Private Sub cmdNext_Click()
+    On Error GoTo errHandler
+
+    Me.cmdNext.Enabled = False
+    DoEvents
+
+    '-- Capture chosen columns (exactly 4)
+    Dim ci As Long
+    ci = 0
+    Dim i As Long
+    For i = 0 To Me.lstChosenColumns.ListCount - 1
+        If Me.lstChosenColumns.Selected(i) Then
+            ci = ci + 1
+            chosenColNames(ci) = Me.lstChosenColumns.ItemData(i)
+            chosenColIdx(ci) = FindHeaderIndex(chosenColNames(ci))
+            If ci = 4 Then Exit For
+        End If
+    Next i
+
+    '-- Capture separation columns (0+)
+    mSepCount = 0
+    ReDim mSepColNames(0)
+    ReDim mSepColIdx(0)
+    For i = 0 To Me.lstSeparationColumns.ListCount - 1
+        If Me.lstSeparationColumns.Selected(i) Then
+            ReDim Preserve mSepColNames(mSepCount)
+            ReDim Preserve mSepColIdx(mSepCount)
+            mSepColNames(mSepCount) = Me.lstSeparationColumns.ItemData(i)
+            mSepColIdx(mSepCount) = FindHeaderIndex(mSepColNames(mSepCount))
+            mSepCount = mSepCount + 1
+        End If
+    Next i
+
+    '-- Open source Excel and scan groups
+    Dim xlApp As Object, xlWb As Object, xlWs As Object
+    Set xlApp = CreateObject("Excel.Application")
+    xlApp.Visible       = False
+    xlApp.DisplayAlerts = False
+    Set xlWb = xlApp.Workbooks.Open(filePath, ReadOnly:=True)
+    Set xlWs = xlWb.Sheets(1)
+
+    Dim lastRow As Long
+    lastRow = xlWs.Cells(xlWs.Rows.Count, 1).End(-4162).Row
+
+    '-- Find Matrix column for pre-fill
+    Dim matrixColIdx As Long
+    matrixColIdx = FindHeaderIndex("Matrix")
+
+    '-- Collect unique group keys in order of first appearance
+    Dim groupKeys()   As String
+    Dim groupLabels() As String
+    Dim groupMatrix() As String
+    Dim groupCount    As Long
+    groupCount = 0
+    ReDim groupKeys(0)
+    ReDim groupLabels(0)
+    ReDim groupMatrix(0)
+
+    Dim r As Long
+    For r = 2 To lastRow
+        Dim key As String, lbl As String
+        key = BuildRowKey(xlWs, r)
+        lbl = BuildRowLabel(xlWs, r)
+
+        Dim found As Boolean
+        found = False
+        Dim k As Long
+        For k = 0 To groupCount - 1
+            If groupKeys(k) = key Then found = True: Exit For
+        Next k
+
+        If Not found Then
+            ReDim Preserve groupKeys(groupCount)
+            ReDim Preserve groupLabels(groupCount)
+            ReDim Preserve groupMatrix(groupCount)
+            groupKeys(groupCount)   = key
+            groupLabels(groupCount) = lbl
+            If matrixColIdx > 0 Then
+                groupMatrix(groupCount) = Trim(CStr(Nz(xlWs.Cells(r, matrixColIdx).Value, "")))
+            End If
+            groupCount = groupCount + 1
+        End If
+    Next r
+
+    xlWb.Close False
+    xlApp.Quit
+    Set xlWs = Nothing: Set xlWb = Nothing: Set xlApp = Nothing
+
+    '-- Populate tblTempInventoryGroups
+    CurrentDb.Execute "DELETE FROM tblTempInventoryGroups", dbFailOnError
+    Dim db As DAO.Database
+    Dim rs As DAO.Recordset
+    Set db = CurrentDb()
+    Set rs = db.OpenRecordset("tblTempInventoryGroups", dbOpenDynaset)
+    For k = 0 To groupCount - 1
+        rs.AddNew
+            rs!GroupKey   = groupKeys(k)
+            rs!GroupLabel = groupLabels(k)
+            rs!MatrixValue = groupMatrix(k)
+        rs.Update
+    Next k
+    rs.Close
+
+    Me.subInventoryGroups.Form.Requery
+    Me.subInventoryGroups.Visible = True
+    Me.cmdNext.Enabled    = True
+    Me.cmdGenerate.Enabled = True
+    Exit Sub
+
+errHandler:
+    On Error Resume Next
+    xlWb.Close False: xlApp.Quit
+    On Error GoTo 0
+    Me.cmdNext.Enabled = True
+    MsgBox "Error grouping samples: " & Err.Description, vbCritical
+End Sub
+
+' ──────────────────────────────────────────
+'  STEP 3 — GENERATE
+' ──────────────────────────────────────────
+Private Sub cmdGenerate_Click()
+    On Error GoTo errHandler
+
+    '-- Force-save any pending subform edits
+    If Me.subInventoryGroups.Form.Dirty Then
+        Me.subInventoryGroups.Form.Dirty = False
+    End If
+
+    '-- Validate: all groups need SampleType + StorageTemp
+    Dim db As DAO.Database
+    Dim rs As DAO.Recordset
+    Set db = CurrentDb()
+    Set rs = db.OpenRecordset("SELECT * FROM tblTempInventoryGroups ORDER BY TempGroupID")
+    If rs.BOF And rs.EOF Then
+        MsgBox "No groups to process.", vbExclamation
+        rs.Close: Exit Sub
+    End If
+    rs.MoveFirst
+    Do While Not rs.EOF
+        If Trim(Nz(rs!SampleType, "")) = "" Or Trim(Nz(rs!StorageTemp, "")) = "" Then
+            MsgBox "Please fill Sample Type and Storage Temp for every group.", vbExclamation
+            rs.Close: Exit Sub
+        End If
+        rs.MoveNext
+    Loop
+
+    '-- Locate template
+    Dim tmplPath As String
+    tmplPath = CurrentProject.Path & "\inventory_Template.xlsx"
+    If Dir(tmplPath) = "" Then
+        tmplPath = CurrentProject.Path & "\inventory_Template.xls"
+        If Dir(tmplPath) = "" Then
+            MsgBox "Template not found in:" & vbCrLf & CurrentProject.Path & _
+                   vbCrLf & "Expected: inventory_Template.xlsx or .xls", vbCritical
+            rs.Close: Exit Sub
+        End If
+    End If
+    Dim tmplExt As String
+    tmplExt = LCase(Mid(tmplPath, InStrRev(tmplPath, ".")))
+    Dim xlFmt As Long
+    If tmplExt = ".xlsx" Then xlFmt = 51 Else xlFmt = 56  ' xlOpenXMLWorkbook / xlExcel8
+
+    '-- Open source Excel
+    Dim xlApp As Object, xlSrc As Object, xlSrcWs As Object
+    Set xlApp = CreateObject("Excel.Application")
+    xlApp.Visible       = False
+    xlApp.DisplayAlerts = False
+    Set xlSrc   = xlApp.Workbooks.Open(filePath, ReadOnly:=True)
+    Set xlSrcWs = xlSrc.Sheets(1)
+    Dim lastRow As Long
+    lastRow = xlSrcWs.Cells(xlSrcWs.Rows.Count, 1).End(-4162).Row
+
+    '-- Process each group
+    Dim filesCreated As Long
+    filesCreated = 0
+    rs.MoveFirst
+    Do While Not rs.EOF
+        Dim groupKey  As String: groupKey  = Nz(rs!GroupKey, "")
+        Dim matrixVal As String: matrixVal = Trim(Nz(rs!MatrixValue, ""))
+        Dim sType     As String: sType     = Trim(Nz(rs!SampleType, ""))
+        Dim sTemp     As String: sTemp     = Trim(Nz(rs!StorageTemp, ""))
+
+        '-- Collect matching row numbers
+        Dim rowNums() As Long, rowCount As Long
+        rowCount = 0
+        ReDim rowNums(0)
+        Dim r As Long
+        For r = 2 To lastRow
+            If BuildRowKey(xlSrcWs, r) = groupKey Then
+                ReDim Preserve rowNums(rowCount)
+                rowNums(rowCount) = r
+                rowCount = rowCount + 1
+            End If
+        Next r
+
+        If rowCount > 0 Then
+            '-- Open a fresh copy of the template
+            Dim xlTmpl As Object, xlTmplWs As Object
+            Set xlTmpl   = xlApp.Workbooks.Open(tmplPath)
+            Set xlTmplWs = xlTmpl.Sheets(1)
+
+            '-- Fill header fields
+            xlTmplWs.Cells(2, 3).Value = studyNumber
+            xlTmplWs.Cells(3, 3).Value = matrixVal & " (" & sType & ")"
+            xlTmplWs.Cells(4, 3).Value = sTemp
+
+            '-- Write chosen-column titles in row 6
+            Dim c As Long
+            For c = 1 To 4
+                xlTmplWs.Cells(6, c).Value = chosenColNames(c)
+            Next c
+
+            '-- Insert one row at position 7 per sample, write data
+            '   Footer (originally rows 7-10) shifts down with each insert
+            Dim writeRow As Long
+            writeRow = 7
+            Dim i As Long
+            For i = 0 To rowCount - 1
+                xlTmplWs.Rows(writeRow).Insert
+                For c = 1 To 4
+                    xlTmplWs.Cells(writeRow, c).Value = _
+                        xlSrcWs.Cells(rowNums(i), chosenColIdx(c)).Value
+                Next c
+                writeRow = writeRow + 1
+            Next i
+
+            '-- Save file
+            Dim outPath As String
+            outPath = "C:\" & CleanFileName(studyNumber) & "_" & _
+                              CleanFileName(matrixVal)   & "_" & _
+                              CleanFileName(sType)       & "_" & _
+                              CleanFileName(sTemp)       & tmplExt
+            xlTmpl.SaveAs outPath, xlFmt
+            xlTmpl.Close False
+            Set xlTmplWs = Nothing: Set xlTmpl = Nothing
+            filesCreated = filesCreated + 1
+
+            '-- Resolve StudyID and log
+            Dim resolvedID As Long
+            resolvedID = ResolveStudyID(matrixVal)
+            If resolvedID > 0 Then
+                Dim rsLog As DAO.Recordset
+                Set rsLog = db.OpenRecordset("tblInventories", dbOpenDynaset)
+                rsLog.AddNew
+                    rsLog!StudyID    = resolvedID
+                    rsLog!Matrix     = matrixVal
+                    rsLog!SampleType = sType
+                    rsLog!StorageTemp = sTemp
+                    rsLog!FilePath   = outPath
+                    rsLog!CreatedDate = Now()
+                    rsLog!CreatedBy  = gCurrentUser
+                rsLog.Update
+                rsLog.Close
+                WriteLog "Create Inventory", "frmCreateInventory", _
+                    "StudyID: " & resolvedID & "  File: " & outPath
+            End If
+        End If
+        rs.MoveNext
+    Loop
+    rs.Close
+
+    xlSrc.Close False
+    xlApp.Quit
+    Set xlSrcWs = Nothing: Set xlSrc = Nothing: Set xlApp = Nothing
+
+    MsgBox filesCreated & " inventory file(s) saved to C:\", vbInformation, "Done"
+    Exit Sub
+
+errHandler:
+    On Error Resume Next
+    xlSrc.Close False: xlApp.Quit
+    If Not rs Is Nothing Then rs.Close
+    On Error GoTo 0
+    MsgBox "Error generating files: " & Err.Description, vbCritical
+End Sub
+
+' ──────────────────────────────────────────
+'  HELPERS
+' ──────────────────────────────────────────
+Private Function FindHeaderIndex(colName As String) As Long
+    Dim i As Long
+    For i = 1 To headerCount
+        If LCase(headers(i)) = LCase(colName) Then
+            FindHeaderIndex = i: Exit Function
+        End If
+    Next i
+    FindHeaderIndex = 0
+End Function
+
+Private Function BuildRowKey(ws As Object, row As Long) As String
+    If mSepCount = 0 Then BuildRowKey = "__ALL__": Exit Function
+    Dim key As String, i As Long
+    For i = 0 To mSepCount - 1
+        If key <> "" Then key = key & "|"
+        key = key & Trim(CStr(Nz(ws.Cells(row, mSepColIdx(i)).Value, "")))
+    Next i
+    BuildRowKey = key
+End Function
+
+Private Function BuildRowLabel(ws As Object, row As Long) As String
+    If mSepCount = 0 Then BuildRowLabel = "All samples": Exit Function
+    Dim lbl As String, i As Long
+    For i = 0 To mSepCount - 1
+        If lbl <> "" Then lbl = lbl & "   |   "
+        lbl = lbl & mSepColNames(i) & ": " & _
+              Trim(CStr(Nz(ws.Cells(row, mSepColIdx(i)).Value, "")))
+    Next i
+    BuildRowLabel = lbl
+End Function
+
+Private Function CleanFileName(s As String) As String
+    Dim r As String, i As Long
+    r = s
+    Dim bad As String
+    bad = "\/:*?""<>|"
+    For i = 1 To Len(bad)
+        r = Replace(r, Mid(bad, i, 1), "_")
+    Next i
+    CleanFileName = Trim(r)
+End Function
+
+Private Function ResolveStudyID(matrixVal As String) As Long
+    '-- Try exact match on StudyNumber + Matrix
+    Dim sql As String
+    sql = "SELECT StudyID FROM tblStudies " & _
+          "WHERE StudyNumber='" & Replace(studyNumber, "'", "''") & "' " & _
+          "AND Matrix='"        & Replace(matrixVal,   "'", "''") & "'"
+    Dim rs As DAO.Recordset
+    Set rs = CurrentDb.OpenRecordset(sql)
+    If Not rs.EOF Then
+        ResolveStudyID = rs!StudyID
+        rs.Close: Exit Function
+    End If
+    rs.Close
+
+    '-- Not found — ask user
+    Dim ans As Integer
+    ans = MsgBox( _
+        "No study found for Study Number '" & studyNumber & "' with Matrix '" & matrixVal & "'." & vbCrLf & vbCrLf & _
+        "YES  — Link to the current study as-is" & vbCrLf & _
+        "NO   — Duplicate this study with Matrix = '" & matrixVal & "'" & vbCrLf & _
+        "CANCEL — Skip logging this file", _
+        vbYesNoCancel + vbQuestion, "Study / Matrix Not Found")
+
+    Select Case ans
+        Case vbYes:    ResolveStudyID = studyID
+        Case vbNo:     ResolveStudyID = DuplicateStudyWithMatrix(matrixVal)
+        Case vbCancel: ResolveStudyID = 0
+    End Select
+End Function
+
+Private Function DuplicateStudyWithMatrix(newMatrix As String) As Long
+    Dim rsSrc As DAO.Recordset
+    Set rsSrc = CurrentDb.OpenRecordset("SELECT * FROM tblStudies WHERE StudyID=" & studyID)
+    If rsSrc.EOF Then rsSrc.Close: DuplicateStudyWithMatrix = 0: Exit Function
+
+    Dim rsDst As DAO.Recordset
+    Set rsDst = CurrentDb.OpenRecordset("tblStudies", dbOpenDynaset)
+    rsDst.AddNew
+        rsDst!StudyNumber        = Nz(rsSrc!StudyNumber, "")
+        rsDst!SponsorProtocol    = Nz(rsSrc!SponsorProtocol, "")
+        rsDst!ClientProtocol     = Nz(rsSrc!ClientProtocol, "")
+        rsDst!ClientID           = rsSrc!ClientID
+        rsDst!StudyTypeID        = rsSrc!StudyTypeID
+        rsDst!SpeciesID          = rsSrc!SpeciesID
+        rsDst!Species            = Nz(rsSrc!Species, "")
+        rsDst!Matrix             = newMatrix
+        rsDst!StorageTemp        = Nz(rsSrc!StorageTemp, "")
+        rsDst!Tech1ID            = rsSrc!Tech1ID
+        rsDst!Tech2ID            = rsSrc!Tech2ID
+        rsDst!TempFreezerID      = rsSrc!TempFreezerID
+        rsDst!FreezerID          = rsSrc!FreezerID
+        rsDst!StudyDirector      = Nz(rsSrc!StudyDirector, "")
+        rsDst!StudyDirectorEmail = Nz(rsSrc!StudyDirectorEmail, "")
+        rsDst!Scientist          = Nz(rsSrc!Scientist, "")
+        rsDst!ScientistEmail     = Nz(rsSrc!ScientistEmail, "")
+        rsDst!MonitorName        = Nz(rsSrc!MonitorName, "")
+        rsDst!MonitorEmail       = Nz(rsSrc!MonitorEmail, "")
+        rsDst!CC                 = Nz(rsSrc!CC, "")
+        rsDst!Comments           = Nz(rsSrc!Comments, "")
+    rsDst.Update
+    Dim newID As Long
+    newID = rsDst!StudyID
+    rsDst.Close: rsSrc.Close
+
+    WriteLog "Duplicate Study", "frmCreateInventory", _
+        "Duplicated StudyID " & studyID & " → " & newID & " Matrix: " & newMatrix
+    DuplicateStudyWithMatrix = newID
+End Function
+
+Private Sub cmdClose_Click()
+    DoCmd.Close acForm, Me.Name
+End Sub
